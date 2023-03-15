@@ -1,0 +1,635 @@
+---
+title: 'Disaster Relief Project: Part 1'
+author: "Matt Scheffel"
+output:
+  pdf_document:
+    toc: no
+    toc_depth: '2'
+  html_document:
+    toc: no
+    toc_depth: 2
+    toc_float: yes
+always_allow_html: true
+---
+
+<!--- Below are global settings for knitr. You can override any of them by adding the changes to individual chunks --->
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=TRUE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.width = 5.5,     # set figure width
+                      fig.align = "center",# set figure position
+                      out.width = "49%", # set width of displayed images
+                      warning=TRUE,      # show R warnings
+                      message=TRUE)      # show R messages
+```
+
+<!--- Change font sizes (or other css modifications) --->
+<style>
+h1.title { font-size: 2.2em; }
+h1 { font-size: 2em; }
+h2 { font-size: 1.5em; }
+h3 { font-size: 1.2em; }
+pre { font-size: 0.8em; }
+</style>
+
+
+
+**DS 6030 | Spring 2023 | University of Virginia **
+
+*******************************************
+
+```{r}
+# set working directory
+setwd("/Users/matthewscheffel/Desktop/MSDS/DS 6030/Disaster Relief Project")
+getwd()
+```
+
+```{r}
+# load in the necessary packages
+library(tidyverse)
+library(caret)
+library(dplyr)
+library(glmnet)
+library(ggplot2)
+library(GGally)
+library(ROCR)
+library(plotly)
+library(ggcorrplot)
+library(ggpubr)
+library(cowplot)
+library(parallel)
+library(kableExtra)
+library(tidyr)
+library(pROC)
+```
+
+```{r}
+#install.packages("webshot")
+#webshot::install_phantomjs()
+```
+
+
+# Data Wrangling and EDA
+
+To begin this project, I will load in the data and begin an Exploratory Data Analysis of the dataset. I will examine the underlying statistics of the data and create a number of data visualizations.
+
+```{r}
+# import data
+data <- read.csv("HaitiPixels.csv", sep=",", header=TRUE)
+
+# head of the data
+head(data)
+
+# structure of the data frame
+str(data)
+
+# summary statistics
+summary(data)
+```
+The data set includes the following variables:
+
+"Class" is a categorical variable with five categories describing the type of land (vegetation, soil, rooftop, non-tarp, and blue-tarp) contained within the images.
+"Red", "Green", and "Blue" are numerical variables representing the intensity of each color in the pixels of the image for each land category.
+
+```{r}
+data$Blue_Tarp <- ifelse(data$Class == "Blue Tarp", "Yes", "No")
+data$Blue_Tarp <- factor(data$Blue_Tarp, levels = c("No", "Yes"))
+```
+
+After loading and examining the data, I created a new variable called "Blue_Tarp" that checks whether the "Class" column has values that are equal to the "Blue Tarp" variable. If they are equal, the Blue_Tarp variable is set to "Yes" (and set to "No" if they are not equal.) I then converted the new variable (Blue_Tarp) to a factor with levels of "No" and "Yes". Adding this binary value makes sense since we are only interested in predicting if a tarp pixel is blue or not (as opposed to differentiating between multiple colors.)
+
+Now, I will create and examine a number of data visualizations.
+
+# Histograms of Pixel Values by Tarp Status
+
+```{r}
+data %>%
+  select(Blue, Green, Red, Blue_Tarp) %>%
+  gather(key = "Color", value = "Value", Blue:Red) %>%
+  ggplot(aes(x = Value, fill = Blue_Tarp)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 50) +
+  scale_fill_manual(values = c("#C0C0C0", "#0000FF"), name = "Blue Tarp") +
+  facet_wrap(~Color, scales = "free_x", nrow = 1) +
+  labs(title = "Histogram of Pixel Values by Color", x = NULL, y = "Count")
+```
+
+# Correlation Visualization of Color Values
+
+```{r}
+# select the color columns
+color_cols <- c("Red", "Green", "Blue")
+
+# correlation matrix
+cor_mat <- cor(data[, color_cols])
+
+# heatmap
+ggcorrplot(cor_mat, 
+           type = "upper", 
+           lab = TRUE, 
+           lab_size = 3, 
+           method = "circle",
+           colors = c("#6D9EC1", "#FFFFFF", "#E46726"),
+           title = "Correlation of Color Values")
+
+```
+
+# Desnity Plots of Pixel Values
+
+```{r}
+# Vegetation
+vegetation <- data %>%
+  filter(Class == "Vegetation") %>%
+  ggplot(aes(x = Green)) +
+  geom_density(color = 'green') +
+  geom_density(aes(x = Red), color = 'red') +
+  geom_density(aes(x = Blue), color = 'blue') + 
+  labs(x = "Pixel Value", y = "Density", title = "Vegetation") +
+  scale_x_continuous(limits = c(0, 255))
+
+# Soil
+soil <- data %>%
+  filter(Class == "Soil") %>%
+  ggplot(aes(x = Green)) +
+  geom_density(color = 'brown') +
+  geom_density(aes(x = Red), color = 'red') +
+  geom_density(aes(x = Blue), color = 'blue') + 
+  labs(x = "Pixel Value", y = "Density", title = "Soil") +
+  scale_x_continuous(limits = c(0, 255))
+
+# Rooftop
+rooftop <- data %>%
+  filter(Class == "Rooftop") %>%
+  ggplot(aes(x = Green)) +
+  geom_density(color = 'gray') +
+  geom_density(aes(x = Red), color = 'red') +
+  geom_density(aes(x = Blue), color = 'blue') + 
+  labs(x = "Pixel Value", y = "Density", title = "Rooftop") +
+  scale_x_continuous(limits = c(0, 255))
+
+# Blue Tarp
+bluetarp <- data %>%
+  filter(Class == "Blue Tarp") %>%
+  ggplot(aes(x = Green)) +
+  geom_density(color = 'blue') +
+  geom_density(aes(x = Red), color = 'red') +
+  geom_density(aes(x = Blue), color = 'lightblue') + 
+  labs(x = "Pixel Value", y = "Density", title = "Blue Tarp") +
+  scale_x_continuous(limits = c(0, 255))
+
+# Various Non-Tarp
+non_tarp <- data %>%
+  filter(Class == "Various Non-Tarp") %>%
+  ggplot(aes(x = Green)) +
+  geom_density(color = 'orange') +
+  geom_density(aes(x = Red), color = 'red') +
+  geom_density(aes(x = Blue), color = 'blue') + 
+  labs(x = "Pixel Value", y = "Density", title = "Various Non-Tarp") +
+  scale_x_continuous(limits = c(0, 255))
+
+# arrange plots in a grid
+plot_grid(vegetation, soil, rooftop, bluetarp, non_tarp, ncol = 3)
+```
+
+# Matrix of Scatter Plots, Histograms, Correlations, Box Plots for Color Variables
+
+```{r}
+ggpairs(data[2:5],aes(color = Blue_Tarp, alpha = 0.5))
+```
+
+# 3D Scatter Plot of Pixel Values
+
+```{r}
+# 3D scatter plot of the pixel values, with colors and size mapped to variables
+# source: https://plotly.com/r/3d-scatter-plots/
+
+plot <- plot_ly(data, x = ~Red, y = ~Green, z = ~Blue, color = ~Class)
+                #colors = c('blue', 'red', 'brown', 'yellow', 'green'), size = 1)
+
+# add markers
+plot <- plot %>% add_markers()
+plot
+```
+
+The data visualizations from the Exploratory Data Analysis have revealed a number of useful observations. Blue and Red pixels appear to have the lowest level of correlation. Based on a number of the graphs above, the pixels do not appear to be categorized as "Blue" until they reach a value of approximately 100 and above. However, from the data summary, we see that Blue has the lowest minimum, lowest mean, and lowest median values. This suggests that the blue tarps may cause classification/identification issues due to their ability to be easily mistaken for darker images such as water, shade, etc.
+
+Based on the visualizations, there appears to be low correlation between Blue Tarp pixel values and higher Red/Green pixel values. This may be due to Red and Green's closer relationship to each other on the color scale than to Blue, which means it's less likely for a pixel to have both a high Red or Green value and a high Blue value. Ultimately, it's less likely to find a Blue Tarp pixel with high Red or Green values.
+
+Now, I will begin fitting and testing the data on a number of models.
+
+**Model Fitting, Tuning Parameter Selection, and Evaluation**
+
+```{r include = FALSE}
+
+# Training and Testing Data sets
+# could be used if desired, using the train function instead
+
+set.seed(123)
+
+train = sample(1:nrow(data), 0.9 * nrow(data)) # 90%
+data.train = data[train,-1] # predictors
+data.test = data[-train,-1]
+class.train = data[train,1] # pull out response values
+class.test = data[-train,1]
+```
+
+To ensure consistency in the cross-validation process, a seed of 123 was set before I created 10 folds from the data using the createFolds() function. The folds were created specifically for the Blue_Tarp variable and returned as training sets. The trainControl() function was then used to set up the same 10-fold cross-validation procedure for all models, with the folds specified as the index and predictions saved along with class probabilities.
+
+```{r}
+set.seed(123)
+
+# 10 folds for cross-validation
+folds <- createFolds(data$Blue_Tarp, k = 10, list = TRUE, returnTrain = TRUE)
+
+# use trainControl from caret package
+# source: https://www.rdocumentation.org/packages/caret/versions/6.0-92/topics/trainControl
+
+# trainControl object
+control <- trainControl(method = "cv",
+                        number = 10,
+                        index = folds,
+                        savePredictions = TRUE,
+                        classProbs = TRUE)
+```
+
+Next, I created some functions to allow for easier analysis of the models using the same standard tests and statistics that are required in this project.
+
+This function defines the thresholds to test and the statistics of interest, and defines a function "Test_Thresholds" which takes a statistical model as the input and outputs the selected statistics for different thresholds. This also computes the false negative/false positive rates and returns the results.
+
+```{r}
+# source: https://www.rdocumentation.org/packages/caret/versions/6.0-92/topics/thresholder
+
+set.seed(123)
+
+# thresholds for testing
+thresholds <- seq(0.1, 0.9, by = 0.1)
+
+# statistics of interest for the model
+stats_threshold <- c("Accuracy", "Kappa", "Sensitivity", "Specificity", "Precision")
+
+# function to compute statistics for different thresholds
+Test_Thresholds <- function(model) {
+  library(caret)
+  
+  # statistics for different thresholds
+  # thresholder function from caret package
+  results <- thresholder(model, 
+                         threshold = thresholds, 
+                         statistics = stats_threshold)
+  
+  # false negative and false positive rates
+  results$falseNeg <- 1 - results$Sensitivity
+  results$falsePos <- 1 - results$Specificity
+  
+  # Return the results
+  return(results)
+}
+```
+
+The "ROC_Plot" function plots the ROC curve and calculates the AUC for a given (binary) classification model. It takes the model, selected performance metrics, and the model name as input. The function uses the prediction probabilities from the model to create a ROC curve, which is plotted and displayed with the AUC value. The AUC value is added to the model_stats data frame, which is returned at the end of the function.
+
+```{r}
+# source: https://www.rdocumentation.org/packages/pROC/versions/1.18.0/topics/roc
+
+ROC_Plot <- function(model, model_stats, model_name, seed = 123) {
+  set.seed(seed)
+  
+  prob <- model$pred[order(model$pred$rowIndex),]
+  
+  rates <- prediction(prob$Yes,as.numeric(data$Blue_Tarp))
+  roc <- performance(rates, measure = "tpr", x.measure = "fpr")
+  plot(roc, main = paste("ROC Curve:", model_name))
+  lines(x = c(0,1), y = c(0,1), col = "red")
+  
+  auc <- performance(rates, "auc")
+  model_stats$AUROC <- auc@y.values[[1]]
+  return(model_stats)
+}
+```
+
+Now, I will run each model on the data set as well as use the aforementioned functions to determine the appropriate thresholds and ROC/AUC values. The models will follow this basic formula:
+
+$$BlueTarp = RedX_1 + GreenX_2 + BlueX_3$$
+
+# Logistic Regression
+
+This model uses the train() function of the caret package to create logistic regression models with binomial family and GLM method. The model is cross-validated using trainControl() to calculate accuracy and kappa statistics.
+
+```{r}
+set.seed(123)
+
+GLM_Reg<-train(Blue_Tarp~Red+Green+Blue,
+      data = data,
+      family = "binomial",
+      method = "glm",
+      trControl = control)
+
+GLM_Reg
+```
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+GLM_Reg_T <- Test_Thresholds(GLM_Reg)
+GLM_Reg_T[2:9] %>% slice_max(Accuracy)
+```
+
+From the threshold test, we can see that at a probability threshold of 0.7, the accuracy was 0.996, kappa was 0.928, sensitivity was 0.998, specificity was 0.910, and precision was 0.997. In this case, approximately 9% of the non-blue tarp values were classified as a blue tarp by the model. On the other hand, only approximately 0.16% of the blue tarp values were classified as non-blue tarp by this model. This tells us that the model has a high sensitivity but a relatively lower specificity, which means that it is adept at identifying blue tarps but may also mis-classify some non-blue tarps as blue. Overall, these stats suggest that the model performs well at this threshold value.
+
+```{r}
+GLM_Final <- GLM_Reg_T[2:9] %>% slice_max(Accuracy)
+GLM_Final <- ROC_Plot(GLM_Reg, GLM_Final, "Logistic Regression")
+```
+
+The Logistic Regression model has an AUROC value of 0.9985.
+
+# Linear Discriminant Analysis
+
+This model uses the train() function of the caret package to create an LDA method model. The model is cross-validated using trainControl() to calculate accuracy and kappa statistics.
+
+```{r}
+set.seed(123)
+
+LDA_Data <- train(Blue_Tarp ~ Red + Green + Blue, data = data,
+                  method = "lda",
+                  trControl = control)
+
+LDA_Data
+```
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+LDA_Data_T <- Test_Thresholds(LDA_Data)
+LDA_Data_T[2:9] %>% slice_max(Accuracy)
+```
+
+From the threshold test, we can see that at a  probability threshold of 0.1, the model has an accuracy of 0.985 and a sensitivity of 0.993, which means that the model correctly identified most of the positive cases. However, the specificity is relatively low at 0.741, indicating that the model has a higher false positive rate, meaning it incorrectly identified some negative cases as positive. This trade-off between sensitivity and specificity can be adjusted by changing the probability threshold value.
+
+Since the threshold may need to be adjusted, I will test for a superior value.
+
+```{r}
+# maximize accuracy
+accuracy <- "Accuracy"
+
+# threshold that maximizes accuracy
+optimal_threshold <- LDA_Data_T %>% 
+  filter_at(vars(contains(accuracy)), all_vars(!is.na(.))) %>%  # missing values
+  slice(which.max(get(accuracy))) %>%  # get the row with the highest performance metric value
+  pull(prob_threshold)  # optimal threshold
+
+# print optimal threshold
+cat("Optimal threshold value based on Accuracy:", optimal_threshold, "\n")
+
+```
+
+```{r}
+# maximize precision
+precision <- "Precision"
+
+# threshold that maximizes precision
+optimal_threshold <- LDA_Data_T %>% 
+  filter_at(vars(contains(precision)), all_vars(!is.na(.))) %>%  # missing values
+  slice(which.max(get(precision))) %>%  # get the row with the highest performance metric value
+  pull(prob_threshold)  # optimal threshold
+
+# print optimal threshold
+cat("Optimal threshold value based on Precision:", optimal_threshold, "\n")
+```
+
+```{r}
+# maximize specificity
+specificity <- "Specificity"
+
+# threshold that maximizes specificity
+optimal_threshold <- LDA_Data_T %>% 
+  filter_at(vars(contains(specificity)), all_vars(!is.na(.))) %>%  # missing values
+  slice(which.max(get(specificity))) %>%  # get the row with the highest performance metric value
+  pull(prob_threshold)  # optimal threshold
+
+# print optimal threshold
+cat("Optimal threshold value based on Specificity:", optimal_threshold, "\n")
+```
+
+Running a few tests seems to indicate that a higher threshold would be better. I will adjust my model to use a threshold value of 0.9.
+
+```{r}
+LDA_Data_T$prob_threshold <- 0.9
+```
+
+
+```{r}
+LDA_Final <- LDA_Data_T[2:9] %>% slice_max(Accuracy)
+LDA_Final <- ROC_Plot(LDA_Data, LDA_Final, "LDA")
+```
+
+The AUROC value for the LDA model is 0.9889.
+
+# Quadratic Discriminant Analyis
+
+This model uses the train() function of the caret package to create a QDA method model. The model is cross-validated using trainControl() to calculate accuracy and kappa statistics.
+
+```{r}
+set.seed(123)
+
+QDA_Data <- train(Blue_Tarp~Red+Green+Blue, data=data,
+                  method="qda",
+                  trControl=control)
+
+QDA_Data
+```
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+QDA_Data_T <- Test_Thresholds(QDA_Data)
+QDA_Data_T[2:9] %>% slice_max(Accuracy)
+```
+
+From the threshold test, we can infer that at a probability threshold of 0.7, the model has a strong overall accuracy of 0.9947 and a high sensitivity value of 0.9993, indicating that it is effective at identifying true positives. However, it also has a relatively high false positive rate of over 14%.
+
+```{r}
+QDA_Final <- QDA_Data_T[2:9] %>% slice_max(Accuracy)
+QDA_Final <- ROC_Plot(QDA_Data, QDA_Final, "QDA")
+```
+
+The QDA model has an AUROC value of 0.9982.
+
+# K-Nearest Neighbor
+
+This model uses the train() function of the caret package to create a KNN method model. The model is cross-validated using trainControl() to calculate accuracy and kappa statistics.
+
+First, I attempted to create a plot to help determine the accuracy of each K-value:
+
+```{r}
+# grid of tuning parameters for k in KNN model
+#knn_grid <- data.frame(k = seq(5, 50, 10))
+
+# train KNN model
+#KNN_Data <- train(Blue_Tarp ~ Red + Green + Blue, data = data,
+                  #method = "knn",
+                  #tuneGrid = knn_grid,
+                  #metric = "Accuracy",
+                  #trControl = control)
+
+# results
+#plot(KNN_Data)
+```
+
+However, my R was crashing if I tried to test a value above 20.
+
+Thus, after testing and experimenting with multiple k-values, I determined to use k = 20 as a good value for this model.
+
+```{r}
+set.seed(123)
+
+# source: https://rpubs.com/Mentors_Ubiqum/tunegrid_tunelength
+
+KNN_Data <- train(Blue_Tarp~Red+Green+Blue, data=data,
+                  tuneGrid = data.frame(k=seq(20,20,1)),
+                  method = "knn",
+                  metric = "Accuracy",
+                  trControl = control)
+
+KNN_Data$results %>% slice_max(Accuracy)
+```
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+KNN_Data_T <- Test_Thresholds(KNN_Data)
+KNN_Data_T %>% slice_max(Accuracy)
+```
+
+This model used a probability threshold of 0.4 and achieved a high accuracy of 0.997 as well as a high precision level of 0.998. The model correctly identified almost all true positives but had a relatively lower specificity of 0.942. Both the false positive and false negative rates were very low.
+
+```{r}
+KNN_Final <- KNN_Data_T[1:9] %>% slice_max(Accuracy)
+KNN_Final <- ROC_Plot(KNN_Data, KNN_Final, "KNN")
+```
+
+The AUROC value for the KNN model was 0.9995.
+
+# Penalized Logistic Regression (Elastic Net Penalty)
+
+The model performs Penalized Logistic Regression in the form of a ridge regression using the "glmnet" function from the caret package. It creates a grid of tuning parameters using "expand.grid", trains the model with "train", and then outputs the results. Ridge regression is a form of PLR that includes a penalty term in the objective function to reduce the complexity of the model and its overfitting. The tuneGrid uses a sequence of lambda values in this model.
+
+```{r}
+# source: https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/expand.grid
+
+lambdas <- expand.grid(alpha = 0, lambda = seq(0,1, 0.1))
+
+Ridge_Data <- train(Blue_Tarp~Red+Green+Blue, data = data,
+                  method = "glmnet",
+                  tuneGrid = lambdas,
+                  trControl = control)
+
+Ridge_Data$results %>% slice_max(Accuracy)
+```
+Now, the model is updated to perform elastic net regularization once again using the "glmnet" function from the caret package. This model uses a weighted combination of L1 and L2 penalties by setting alpha to 0.8, and sets lambda to 0 to use the minimum amount of regularization.
+
+```{r}
+Elastic_Data <- train(Blue_Tarp~Red+Green+Blue, data = data,
+                      method = "glmnet",
+                      tuneGrid = expand.grid(alpha = 0.8, lambda = 0),
+                      trControl = control)
+       
+Elastic_Data$results %>% slice_max(Accuracy)
+```
+
+From the 2 outputs, we can infer that the Elastic Data model with alpha = 0.8 and lambda = 0 produces the best results.
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+Elastic_Data_T <- Test_Thresholds(Elastic_Data)
+Elastic_Data_T %>% slice_max(Accuracy)
+```
+
+The model produces high accuracy (99%) and fairly low false negative and false positive rates.
+
+```{r}
+PLR_Final <- Elastic_Data_T %>% slice_max(Accuracy)
+PLR_Final <- ROC_Plot(Elastic_Data, PLR_Final, "Penalized Logistic Regression")
+```
+
+The AUROC value for the PLR model is 0.9985.
+
+# Performance Tables
+
+```{r echo = FALSE, results = 'asis'}
+
+# additional source: https://rmarkdown.rstudio.com/lesson-7.html
+
+# add model name to stats
+GLM_Final <- GLM_Final %>% mutate(Model="LR")
+LDA_Final <- LDA_Final %>% mutate(Model="LDA")
+QDA_Final <- QDA_Final %>% mutate(Model="QDA")
+KNN_Final <- KNN_Final %>% mutate(Model="KNN")
+PLR_Final <- PLR_Final %>% mutate(Model="PLR")
+
+# merge the stats together, create tuning column from k and alpha
+table_data <- Reduce(function(x, y) merge(x, y, all=TRUE),
+                         list(GLM_Final,
+                              LDA_Final,
+                              QDA_Final,
+                              KNN_Final,
+                              PLR_Final)) %>% mutate(Tuning = coalesce(k,alpha))
+
+# format the table and set model as the index
+Table_Stats <- table_data %>%
+  dplyr::select("Model", "Tuning", "AUROC",
+                "prob_threshold", "Accuracy",
+                "Sensitivity", "falsePos", "Precision") %>%
+  rename(Threshold = prob_threshold, TPR = Sensitivity, FPR = falsePos) %>%
+  column_to_rownames(var = 'Model') %>%
+  round(4)
+
+# create column for lambda values in PLR
+Table_Stats$Tuning[Table_Stats$Tuning == 0] <- "*"
+
+# create table with kableExtra
+kable(Table_Stats, format = "html", caption = "Cross Validation Results") %>%
+  kable_styling(full_width = F, position = "center", 
+                bootstrap_options = c("striped", "hover", "condensed")) %>%
+  column_spec(1, bold = T, border_right = T)
+```
+
+```{r echo = FALSE, results = 'asis'}
+
+model_table <- data.frame(Model_Name = c("Logistic Regression", "LDA (Linear Discriminant Analysis)", "QDA (Quadratic Discriminant Analysis)", "KNN (K-Nearest Neighbor)", 
+"PLR (Penalized Logistic Regression)"), Metrics_Calculation = c("Average Across 10 Folds", "Average Across 10 Folds", "Average Across 10 Folds", "Maximum Value Across 10 Folds", "Average Across 10 Folds"))
+
+knitr::kable(
+  model_table,
+  caption = "Summary of Calculations for Model Metrics",
+  align = c("l", rep("c", ncol(model_table) - 1))
+) %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  column_spec(1, bold = TRUE)
+
+```
+
+# Conclusions
+
+1. Best Model Performance: 
+
+The KNN model performed the best in terms of AUROC, Accuracy, TPR, FPR, and Precision. It achieved an AUROC of 0.9995, which is very close to 1 and indicates that it can distinguish between the different classes with high accuracy. It also had the highest Accuracy of 0.9969, TPR of 0.9988, FPR of 0.0579, and Precision of 0.9981, which means that it had a low rate of false positives and false negatives and a high rate of true positives and true negatives. QDA performed the second-best, with an AUROC of 0.9982, Accuracy of 0.9947, TPR of 0.9993, FPR of 0.1444, and Precision of 0.9953. PLR and LR both performed similarly, with an AUROC of 0.9985, Accuracy of 0.9956, TPR of 0.9986, FPR of 0.0955 for PLR and TPR of 0.9984, FPR of 0.0895 for LR, and Precision of 0.9969 for PLR and 0.9970 for LR. LDA performed the worst among the models, with an AUROC of 0.9889, Accuracy of 0.9846, TPR of 0.9926, FPR of 0.2587, and Precision of 0.9915. KNN is a non-parametric method and does not require any assumptions about the underlying distribution of the data. KNN is also easy to implement and does not require a long training time. However, KNN has several weaknesses. It requires a large amount of memory to store the training data and can be slow to make predictions for large data sets. It is also sensitive to the choice of the distance metric and the number of neighbors, and can perform poorly if the training data is imbalanced.
+
+In the context of this experiment, there may not necessarily be a "best model" for rescuing people from a naturals disaster due to the unpredictability of nature and the fairly similar results each model in this experiment produced. However, in general, KNN appears to be the most suitable model for identifying stranded people due to the impressive statistical results the model produced as well as the ability of the model to adapt to different scenarios by considering nearby instances. That feature could be very helpful in predicting which areas need to be prioritized for rescue operations. Additionally, KNN's high accuracy and low false negative rate in this experiment make it a strong candidate for this task, as we would want to minimize the number of false negatives and positives. In the real life scenario, rescuing someone who does not need rescuing (or misidentifying a non-person as a rescue target) would result in wasted time and effort and ultimately could cost someone their health and/or life.
+
+2. Data Set Formulation: 
+
+The "Pixels.csv" data set is highly suitable for predictive modeling in this experiment because it contains a clear binary outcome variable ("Yes" or "No" for the "Blue Tarp" variable), as well as several quantitative predictors ("Red", "Green", and "Blue" pixel values). This style of data is frequently seen in classification problems, where our goal is to predict the class of a new observation based on the predictor variables. In this case, the predictive modeling tools used, such as logistic regression, LDA, QDA, KNN, and penalized logistic regression, are well-suited for classification problems and can be used to predict whether a new set of Red, Green, and Blue values corresponds to a positive or negative Blue Tarp outcome. Additionally, the data has been carefully selected and pre-processed to remove any potiental irrelevant or noisy information. This helps to reduce the complexity of the data and improve the accuracy of the models. Finally, the data set is relatively large (with over 60,000 data points), which is an important factor for training accurate predictive statistical models.
+
+In summary, the data set in this project is well-structured, cleanly labeled, and pre-processed, which makes it easily usable with predictive modeling tools.
+
+3. Additional Recommendation: 
+
+My recommended action to help improve the results of the experiment would be to improve upon the data collection and classification process for the experiment. The data in this experiment was fairly primitive, with basic colors and conditions making up the data set. Gathering more advanced data would help in two ways: it would allow for greater ability to distinguish tarps vs. non-tarps and it would allow rescuers to prioritize certain areas/people over others. Collecting more data with a wider range of conditions would allow us to provide more training examples for the model to learn from and improve its ability to adapt to new, previously unknown data. Even something such as more complex color classification schemes may make a significant difference in combing through the data for colors that match those of the tarps. 
+
+More advanced data classifications would also allow rescuers to determine which people are in greater need of rescue. For example, if a person's tarp is damaged and wet, they may be in greater need than a group who have an intact and dry tarp for shelter. One may also consider including data regarding elevation (for flooding), general population age, medical status, and more in certain areas to prioritize rescue victims.
+
+However, these recommendations ultimately do have their limitations, as gathering larger amounts of complex data may ultimately result in the project having to graduate past more simple predictive models to more complicated machine learning models.

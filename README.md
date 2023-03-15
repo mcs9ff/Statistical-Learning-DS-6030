@@ -1,2 +1,2 @@
 # DS-6030
-UVAS Statistical Learning
+UVA Statistical Learning

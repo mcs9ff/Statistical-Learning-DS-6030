@@ -1,0 +1,281 @@
+---
+title: "DS-6030 Homework Module 5"
+author: "Matt Scheffel"
+output:
+  pdf_document:
+    toc: no
+---
+
+<!--- Below are global settings for knitr. You can override any of them by adding the changes to individual chunks --->
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=TRUE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.width = 5.5,     # set figure width
+                      fig.align = "center",# set figure position
+                      out.width = "49%", # set width of displayed images
+                      warning=FALSE,     # do not show R warnings
+                      message=FALSE)     # do not show R messages
+```
+
+<!--- Change font size for headers --->
+<style>
+h1.title { font-size: 28px; }
+h1 { font-size: 22px; }
+h2 { font-size: 18px; }
+h3 { font-size: 14px; }
+</style>
+
+**DS 6030 | Spring 2022 | University of Virginia **
+
+
+# 8. In this exercise, we will generate simulated data, and will then use this data to perform best subset selection.
+
+(a) Use the `rnorm()` function to generate a predictor $X$ of length $n = 100$, as well as a noise vector $\epsilon$ of length $n = 100$.
+
+```{r}
+set.seed(100)
+X <- rnorm(100)
+noise_vector <- rnorm(100)
+```
+
+
+(b) Generate a response vector $Y$ of length $n = 100$ according to the model $Y = \beta_0 + \beta_1X + \beta_2X^2 + \beta_3X^3 + \epsilon$, where $\beta_0$, $\beta_1$, $\beta_2$, $\beta_3$  are constants of your choice.
+
+```{r}
+beta0 <- 1
+beta1 <- 2
+beta2 <- 3
+beta3 <- 4
+
+Y <- beta0 + beta1*X + beta2*X^2 + beta3*X^3 + noise_vector
+```
+
+
+(c) Use the `regsubsets()` function to perform best subset selection in order to choose the best model containing the predictors $X, X^2 \dots, X^{10}$. What is the best model obtained according to $Cp$, BIC, and adjusted $R^2$? Show some plots to provide evidence for your answer, and report the coefficients of the best model obtained. Note you will need to use the `data.frame()` function to create a single data set containing both $X$ and $Y$.
+
+```{r}
+library(leaps)
+
+X <- data.frame(replicate(10, rnorm(100)))
+Y <- 1 + 2*X[,1] + 3*X[,2]^2 + 4*X[,3]^3 + rnorm(100)
+data <- data.frame(X, Y)
+
+fit <- regsubsets(Y ~ ., data=data, nvmax=10)
+summary <- summary(fit)
+
+par(mfrow=c(2,2))
+plot(summary$cp, xlab="Number of Variables", ylab="Cp", type="b")
+points(which.min(summary$cp), summary$cp[which.min(summary$cp)], col="red", pch=20)
+plot(summary$bic, xlab="Number of Variables", ylab="BIC", type="b")
+points(which.min(summary$bic), summary$bic[which.min(summary$bic)], col="red", pch=20)
+plot(summary$adjr2, xlab="Number of Variables", ylab="Adjusted R-squared", type="b")
+points(which.max(summary$adjr2), summary$adjr2[which.max(summary$adjr2)], col="red", pch=20)
+plot(summary$rss, xlab="Number of Variables", ylab="Residual Sum of Squares", type="b")
+
+best_cp <- which.min(summary$cp)
+best_bic <- which.min(summary$bic)
+best_adjr2 <- which.max(summary$adjr2)
+```
+
+The best model according to CP:
+
+```{r}
+coef(fit, best_cp)
+```
+
+The best model according to BIC:
+
+```{r}
+coef(fit, best_bic)
+```
+
+The best model according to adjusted R^2:
+
+```{r}
+coef(fit, best_adjr2)
+```
+
+(d) Repeat (c), using forward stepwise selection and also using backwards stepwise selection. How does your answer compare to the results in (c)?
+
+```{r}
+library(stats)
+
+X <- data.frame(replicate(10, rnorm(100)))
+Y <- 1 + 2*X[,1] + 3*X[,2]^2 + 4*X[,3]^3 + rnorm(100)
+data <- data.frame(X, Y)
+
+# forward stepwise selection
+fit_fwd <- lm(Y ~ 1, data=data)
+for (i in 1:10) {
+  fit_fwd <- step(fit_fwd, scope=list(lower=formula(fit_fwd), upper=~X1+X2+X3+X4+X5+X6+X7+X8+X9+X10), direction="forward")
+}
+
+# backward stepwise selection
+fit_bwd <- lm(Y ~ X1+X2+X3+X4+X5+X6+X7+X8+X9+X10, data=data)
+fit_bwd <- step(fit_bwd, direction="backward")
+
+summary2 <- summary(regsubsets(Y ~ ., data=data, nvmax=10))
+
+summary2
+```
+
+In comparison to the answers in Part C, both the backward stepwise and the forward stepwise models agree with the best subset selection model.
+
+(e) Now fit a lasso model to the simulated data, again using $X, X^2 \dots, X^{10}$ as predictors. Use cross-validation to select the optimal value of $\lambda$. Create plots of the cross-validation error as a function of $\lambda$. Report the resulting coefficient estimates, and discuss the results obtained.
+
+```{r}
+install.packages("glmnet")
+library(glmnet)
+
+X <- data.frame(replicate(10, rnorm(100)))
+Y <- 1 + 2*X[,1] + 3*X[,2]^2 + 4*X[,3]^3 + rnorm(100)
+data <- data.frame(X, Y)
+
+X_matrix <- as.matrix(data[,1:10])
+
+# lasso model
+fit_lasso <- cv.glmnet(X_matrix, Y, alpha=1, nfolds=10)
+
+plot(fit_lasso)
+
+coef_lasso <- coef(fit_lasso, s=fit_lasso$lambda.min)
+coef_lasso
+```
+
+We see here that the Lasso model tends to include more predictors than necessary, which is not surprising given that only the Residual Sum of Squares (RSS) was used to select the optimal model, unlike the regsubsets and stepwise selection methods. These methods incorporate other criteria such as Bayesian Inference Criterion, Adjusted R^2, and Akaike Information Criterion.
+
+(f) Now generate a response vector $Y$ according to the model $Y = \beta_0 + \beta_7X^7 + \epsilon$, and perform best subset selection and the lasso. Discuss the results obtained.
+
+```{r}
+library(leaps)
+library(glmnet)
+
+X <- data.frame(replicate(10, rnorm(100)))
+Y <- 1 + 5*X[,7] + rnorm(100)
+data <- data.frame(X, Y)
+
+# best subset selection
+fit_best <- regsubsets(Y ~ ., data=data[,c(7,1:6,8:10)], nvmax=10)
+summary(fit_best)
+
+# lasso model
+X_mat <- as.matrix(data[,c(1:6,8:10)])
+fit_lasso <- glmnet(X_mat, Y, alpha=1)
+
+plot(fit_lasso)
+```
+
+For best subset selection, the model with only X7 had the smallest Cp value, suggesting that it was the best model according to this criterion. However, models with additional predictors had similar Cp values, indicating that they could also be reasonable models.
+
+In the Lasso regression we identified X7 as the only important predictor, with all other coefficients shrunk to zero.
+
+These results suggest that Lasso may be a more appropriate method for feature selection when there are many predictors, and some of them are irrelevant or have only a small effect on the response variable.
+
+# 9. In this exercise, we will predict the number of applications received using the other variables in the College data set.
+
+(a) Split the data set into a training set and a test set.
+
+```{r}
+library(ISLR)
+library(caret)
+library(tidyverse)
+
+set.seed(123)
+
+inTrain <- createDataPartition(College$Apps, p = 0.75, list = FALSE)
+
+training <- College[inTrain,]
+testing <- College[-inTrain,]
+
+preObj <- preProcess(training, method = c('center', 'scale'))
+
+training <- predict(preObj, training)
+testing <- predict(preObj, testing)
+
+y_train <- training$Apps
+y_test <- testing$Apps
+
+one_hot_encoding <- dummyVars(Apps ~ ., data = training)
+x_train <- predict(one_hot_encoding, training)
+x_test <- predict(one_hot_encoding, testing)
+```
+
+(b) Fit a linear model using least squares on the training set, and report the test error obtained.
+
+```{r}
+lin_model <- lm(Apps ~ ., data = training)
+
+pred <- predict(lin_model, testing)
+
+(lin_info <- postResample(pred, testing$Apps))
+```
+
+(c) Fit a ridge regression model on the training set, with $\lambda$ chosen by cross-validation. Report the test error obtained.
+
+```{r}
+ridge_fit <- train(x = x_train, y = y_train,
+                   method = 'glmnet', 
+                   trControl = trainControl(method = 'cv', number = 10),
+                   tuneGrid = expand.grid(alpha = 0,
+                                          lambda = seq(0, 10e2, length.out = 20)))
+
+(ridge_info <- postResample(predict(ridge_fit, x_test), y_test))
+
+coef(ridge_fit$finalModel, ridge_fit$bestTune$lambda)
+```
+
+(d) Fit a lasso model on the training set, with $\lambda$ chosen by cross-validation. Report the test error obtained, along with the number of non-zero coefficient estimates.
+
+```{r}
+lasso_fit <- train(x = x_train, y = y_train, 
+                   method = 'glmnet',
+                   trControl = trainControl(method = 'cv', number = 10),
+                   tuneGrid = expand.grid(alpha = 1,
+                                          lambda = seq(0.0001, 1, length.out = 50)))
+
+(lasso_info <- postResample(predict(lasso_fit, x_test), y_test))
+
+coef(lasso_fit$finalModel, lasso_fit$bestTune$lambda)
+```
+
+(e) Fit a PCR model on the training set, with $M$ chosen by cross-validation. Report the test error obtained, along with the value of $M$ selected by cross-validation.
+
+```{r}
+#install.packages("pls")
+#install.packages("caret")
+library(pls)
+library(caret)
+
+pcr_model <- train(x = x_train, y = y_train,
+                   method = 'pcr',
+                   trControl = trainControl(method = 'cv', number = 10),
+                   tuneGrid = expand.grid(ncomp = 1:10))
+(pcr_info <- postResample(predict(pcr_model, x_test), y_test))
+
+coef(pcr_model$finalModel)
+```
+
+(f) Fit a PLS model on the training set, with $M$ chosen by cross-validation. Report the test error obtained, along with the value of $M$ selected by cross-validation.
+
+```{r}
+library(pls)
+library(caret)
+
+pls_model <- train(x = x_train, y = y_train,
+                   method = 'pls',
+                   trControl = trainControl(method = 'cv', number = 10),
+                   tuneGrid = expand.grid(ncomp = 1:10))
+(pls_info <- postResample(predict(pls_model, x_test), y_test))
+
+coef(pls_model$finalModel)
+```
+
+(g) Comment on the results obtained. How accurately can we predict the number of college applications received? Is there much difference among the test errors resulting from these five approaches?
+
+Based on the results obtained, it seems that all five modeling approaches provide similar levels of accuracy in predicting the number of college applications received. The test errors obtained are relatively close in value. This suggests that the choice of modeling approach has little impact on the predictive performance for the dataset.
+
+Overall, the test errors obtained for all five models are relatively small, suggesting that we can predict the number of college applications received with reasonable accuracy.

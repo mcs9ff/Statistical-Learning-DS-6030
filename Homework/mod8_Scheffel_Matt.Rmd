@@ -1,0 +1,147 @@
+---
+title: "DS-6030 Homework Module 8"
+author: "Matt Scheffel"
+output:
+  pdf_document:
+    toc: no
+---
+
+<!--- Below are global settings for knitr. You can override any of them by adding the changes to individual chunks --->
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=TRUE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.width = 5.5,     # set figure width
+                      fig.align = "center",# set figure position
+                      out.width = "49%", # set width of displayed images
+                      warning=FALSE,     # do not show R warnings
+                      message=FALSE)     # do not show R messages
+```
+
+<!--- Change font size for headers --->
+<style>
+h1.title { font-size: 28px; }
+h1 { font-size: 22px; }
+h2 { font-size: 18px; }
+h3 { font-size: 14px; }
+</style>
+
+**DS 6030 | Spring 2022 | University of Virginia **
+
+
+# 7. In the lab, we applied random forests to the Boston data using `mtry = 6` and using `ntree = 25` and `ntree = 500`. 
+
+Create a plot displaying the test error resulting from random forests on this data set for a more comprehensive range of values for mtry and ntree. You can model your plot after Figure 8.10. Describe the results obtained.
+
+```{r}
+library(ISLR)
+library(randomForest)
+library(MASS)
+data("Boston")
+
+set.seed(123)
+
+# Create train and test samples
+train_idx <- sample(nrow(Boston), nrow(Boston) / 3)
+x_train <- Boston[train_idx, -14]
+y_train <- Boston[train_idx, 14]
+x_test <- Boston[-train_idx, -14]
+y_test <- Boston[-train_idx, 14]
+
+# Train and test random forest models with different mtry values
+rf1 <- randomForest(x = x_train, y = y_train, xtest = x_test, ytest = y_test, mtry = ncol(Boston) - 1, ntree = 1000)
+rf2 <- randomForest(x = x_train, y = y_train, xtest = x_test, ytest = y_test, mtry = floor((ncol(Boston) - 1) / 2), ntree = 1000)
+rf3 <- randomForest(x = x_train, y = y_train, xtest = x_test, ytest = y_test, mtry = floor(sqrt(ncol(Boston) - 1)), ntree = 1000)
+
+# Plot test MSE as a function of number of trees
+plot(1:1000, rf1$test$mse, type = "l", col = "red", xlab = "# of trees", ylab = "Test MSE", ylim = c(13, 20))
+lines(1:1000, rf2$test$mse, type = "l", col = "green")
+lines(1:1000, rf3$test$mse, type = "l", col = "blue")
+legend("topright", legend = c("mtry = p", "mtry = p/2", "mtry = sqrt(p)"), col = c("red", "green", "blue"), lty = 1, cex = 1)
+
+# Identify optimal number of trees for each model
+which.min(rf1$test$mse)
+which.min(rf2$test$mse)
+which.min(rf3$test$mse)
+
+```
+
+The results from the plot show that the test MSE generally decreases as the number of trees increases for all of the models, albeit with diminishing returns. The optimal number of trees appears to be around 200-300 for all three models. The choice of mtry does not seem to have a significant impact on the performance of the models, although the model with mtry = p/2 tends to perform slightly better than the other models for small to medium number of trees. The model with mtry = sqrt(p) performs the worst. The high test MSE values for all three models suggest that there is still room for improvement in the models.
+
+# 11. This question uses the `Caravan` data set.
+
+(a) Create a training set consisting of the first 1,000 observations, and a test set consisting of the remaining observations.
+
+```{r}
+#install.packages("ISLR")
+#install.packages("DAAG")
+#library(DAAG)
+library(ISLR)
+data("Caravan")
+
+# training set with first 1000 observations
+train <- Caravan[1:1000, ]
+
+# test set with remaining observations
+test <- Caravan[-(1:1000), ]
+```
+
+(b) Fit a boosting model to the training set with `Purchase` as the response and the other variables as predictors. Use 1,000 trees, and a shrinkage value of 0.01. Which predictors appear to be the most important?
+
+```{r}
+# fit boosting model to the training set
+#install.packages("gbm")
+library(gbm)
+set.seed(123)
+boost <- gbm(Purchase ~ ., data = train, distribution = "gaussian", n.trees = 1000, shrinkage = 0.01)
+
+# variable importance table
+summary(boost)
+```
+
+"PPERSAUT" and "MKOOPKLA" appear to be the most important predictors based on the plot and the output table. "MOPLHOOG" and "MBERMIDD" also appear to be of high importance.
+
+(c) Use the boosting model to predict the response on the test data. Predict that a person will make a purchase if the estimated probability of purchase is greater than 20 %. Form a confusion matrix. What fraction of the people predicted to make a purchase do in fact make one? How does this compare with the results obtained from applying KNN or logistic regression to this data set?
+
+```{r}
+# Predict the response on the test data
+prob <- predict(boost, newdata = test, type = "response")
+pred <- ifelse(prob > 0.2, 1, 0)
+
+
+# convert Purchase to binary numeric variable
+test$Purchase <- as.numeric(test$Purchase == "Yes")
+
+# confusion matrix
+table(pred, test$Purchase)
+
+# calculate PPV (positive predictive value)
+PPV <- sum(pred[test$Purchase == 1] == 1) / sum(pred == 1)
+PPV
+```
+
+The PPV of 0.05993364 means approximately 6% of people predicted to make a purchase do in fact make one.
+
+```{r}
+# Fit a logistic regression model to the training set
+log <- glm(Purchase ~ ., data = train, family = binomial)
+
+# Predict the response on the test data
+prob.log <- predict(log, newdata = test, type = "response")
+pred.log <- ifelse(prob.log > 0.2, 1, 0)
+
+# convert Purchase to binary numeric variable
+test$Purchase <- as.numeric(test$Purchase == "Yes")
+
+# Form a confusion matrix
+table(pred.log, test$Purchase)
+
+# Calculate PPV
+PPV.log <- sum(pred.log[test$Purchase == 1] == 1) / sum(pred.log == 1)
+PPV.log
+```
+
+The logistic regression model has a higher PPV value (0.1421569 or approx. 14%) in comparison to the boosting model.

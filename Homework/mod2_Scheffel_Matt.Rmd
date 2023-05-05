@@ -1,0 +1,332 @@
+---
+title: "DS-6030 Homework Module 2"
+author: "Matt Scheffel"
+output:
+  pdf_document:
+    toc: no
+---
+
+<!--- Below are global settings for knitr. You can override any of them by adding the changes to individual chunks --->
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=TRUE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.width = 5.5,     # set figure width
+                      fig.align = "center",# set figure position
+                      out.width = "49%", # set width of displayed images
+                      warning=FALSE,     # do not show R warnings
+                      message=FALSE)     # do not show R messages
+```
+
+<!--- Change font size for headers --->
+<style>
+h1.title { font-size: 28px; }
+h1 { font-size: 22px; }
+h2 { font-size: 18px; }
+h3 { font-size: 14px; }
+</style>
+
+**DS 6030 | Spring 2022 | University of Virginia **
+
+# 9. This question involves the use of multiple linear regression on the Auto data set.
+
+(a) Produce a scatterplot matrix which includes all of the variables in the data set.
+
+```{r}
+library("ISLR2")
+pairs(Auto)
+```
+
+
+(b) Compute the matrix of correlations between the variables using the function `cor()`. You will need to exclude the name variable, which is qualitative.
+
+```{r}
+head(Auto)
+# "name" is the last column
+cor(Auto[1:8])
+```
+
+
+(c) Use the `lm()` function to perform a multiple linear regression with `mpg` as the response and all other variables except name as the predictors. Use the `summary()` function to print the results. 
+
+```{r}
+model1 = lm(mpg ~. -name, data = Auto)
+summary(model1)
+```
+
+
+Comment on the output. For instance:
+
+  i. Is there a relationship between the predictors and the response?
+  
+Yes, multiple predictors  from this model have a relationship with the response. We can tell due to their associated p-values being significant.
+  
+  ii. Which predictors appear to have a statistically significant relationship to the response?
+  
+Displacement, weight, year, and origin have a statistically significant relationship to the response.
+  
+  iii. What does the coefficient for the year variable suggest?
+  
+The coefficient for the year variable suggests that the average effect of an increase of 1 year is an increase of 0.7507727 in mpg, when all other predictors are held constant.
+
+(d) Use the `plot()` function to produce diagnostic plots of the linear regression fit. Comment on any problems you see with the fit. Do the residual plots suggest any unusually large outliers? Does the leverage plot identify any observations with unusually high leverage?
+
+```{r}
+par(mfrow = c(2,2))
+plot(model1)
+```
+
+The residual plot has U-shape pattern that suggests non-linear data. A few of the residuals in the upper right hand corner could be considered large outliers.However, the Residuals vs. Leverage graph shows no observations above the Cook's distance red dotted line that indicate unusually high leverage.
+
+(e) Use the `*` and `:` symbols to fit linear regression models with interaction effects. Do any interactions appear to be statistically significant?
+
+```{r}
+# two most correlated pairs
+model2 <- lm(mpg ~ cylinders * displacement + displacement * weight, data = Auto[, 1:8])
+summary(model2)
+```
+
+Based on this model and the p-values, the interaction between displacement and weight appears to be statistically signifcant.
+
+(f) Try a few different transformations of the variables, such as $\log(X)$, $\sqrt{X}$, $X^2$. Comment on your findings.
+
+```{r}
+par(mfrow = c(2, 2))
+plot(log(Auto$horsepower), Auto$mpg)
+plot(sqrt(Auto$horsepower), Auto$mpg)
+plot((Auto$horsepower)^2, Auto$mpg)
+```
+
+The log transformation helps to create the plot that appears to be the most linear.
+
+# 14. This problem focuses on the collinearity problem.
+
+(a) Perform the following commands in R. 
+
+```{r}
+set.seed(1)
+x1 = runif(100)
+x2 = 0.5*x1 + rnorm(100)/10
+y = 2 + 2*x1 + 0.3*x2 + rnorm(100)
+```
+
+The last line corresponds to creating a linear model in which $y$ is a function of $x1$ and $x2$. Write out the form of the linear model. What are the regression coefficients?
+
+Form of the linear model: $Y$ = 2 + 2$X1$ + 0.3$X2$ + $\epsilon$
+
+Regression coefficients: 2, 2, and 0.3
+
+
+(b) What is the correlation between `x1` and `x2`? Create a scatterplot displaying the relationship between the variables.
+
+```{r}
+cor(x1, x2)
+```
+
+The correlation is 0.8351212.
+
+```{r}
+plot(x1, x2)
+```
+
+
+(c) Using this data, fit a least squares regression to predict `y` using `x1` and `x2`. Describe the results obtained. What are $\hat\beta_0$, $\hat\beta_1$, and $\hat\beta_2$? How do these relate to the true $\beta_0$, $\beta_1$, and $\beta_2$? Can you reject the null hypothesis H0 : $\beta_1=0$? How about the null hypothesis H0 : $\beta_2=0$?
+
+```{r}
+model3 <- lm(y ~ x1 + x2)
+summary(model3)
+```
+
+Coefficient estimates: $\hat\beta_0$ = 2.1305, $\hat\beta_1$ = 1.4396, and $\hat\beta_2$ = 1.0097. The values are not good estimates of the true $\beta_0$, $\beta_1$, and $\beta_2$. $\hat\beta_0$ is the closest to its true value.
+
+For $\beta_1$, we cannot reject the null hypothesis at a 95% level of confidence, but we can at the 99% confidence level.
+
+For $\beta_2$, we  reject the null hypothesis.
+
+(d) Now fit a least squares regression to predict `y` using only `x1`. Comment on your results. Can you reject the null hypothesis $H0$: $\beta_1 =0$?
+
+```{r}
+model4 <- lm(y ~ x1)
+summary(model4)
+```
+
+In this model, the coefficient for $x1$ differs from the previous model that used $x1$ and $x2$ as predictors. In this model, $x1$ is significant with a fairly low p-value and we will reject the null hypothesis, $H0$.
+
+(e) Now fit a least squares regression to predict `y` using only `x2`. Comment on your results. Can you reject the null hypothesis H0: $\beta_2 =0$?
+
+```{r}
+model5 <- lm(y ~ x2)
+summary(model5)
+```
+
+In this model, the coefficient for $x2$ differs from the previous model that used $x1$ and $x2$ as predictors. In this model, $x2$ is significant with a fairly low p-value and we will reject the null hypothesis, $H0$.
+
+(f) Do the results obtained in (c)–(e) contradict each other? Explain your answer.
+
+Yes, the results from (c)-(e) appear to contradict each other. The MLR model does not regard $x1$ and $x2$ as significant predictors, but the SLR models show that $x1$ and $x2$ are significant predictors. However, collinearity may help explain why these variables seemed insignificant in the MLR model.
+
+(g) Now suppose we obtain one additional observation, which was unfortunately mismeasured. 
+
+```{r}
+x1 <- c(x1, 0.1) 
+x2 <- c(x2, 0.8)
+y <- c(y, 6)
+```
+
+
+Re-fit the linear models from (c) to (e) using this new data. What effect does this new observation have on the each of the models? In each model, is this observation an outlier? A high-leverage point? Both? Explain your answers.
+
+```{r}
+model6 <- lm(y ~ x1 + x2)
+model7 <- lm(y ~ x1)
+model8 <- lm(y ~ x2)
+```
+
+```{r}
+summary(model6)
+plot(model6)
+```
+
+
+
+```{r}
+summary(model7)
+plot(model7)
+```
+
+
+```{r}
+summary(model8)
+plot(model8)
+```
+
+In the first new model using $x1$ and $x2$ as predictors, the last point is a high-leverage point. R squared is slightly higher in this model and $x2$ is significantly significant.
+
+In the second new model with $x1$ as the predictor, the last point can be considered an outlier. R squared decreases in this model and $x1$ is significant.
+
+In the third new model with $x2$ as the predictor, there does not appear to be a significant leverage point or outlier. R squared increases in this model and $x1$ is significant.
+
+# 15. This problem involves the Boston data set, which we saw in the lab for this chapter. 
+
+We will now try to predict per capita crime rate using the other variables in this data set. In other words, per capita crime rate is the response, and the other variables are the predictors.
+
+(a)  For each predictor, fit a simple linear regression model to predict the response. Describe your results. In which of the models is there a statistically significant association between the predictor and the response? Create some plots to back up your assertions.
+
+```{r}
+#library(ISLR2)
+Boston <- ISLR2::Boston
+head(Boston)
+attach(Boston)
+```
+
+```{r}
+model9 <- lm(crim ~zn)
+summary(model9)
+model10 <- lm(crim ~ indus)
+summary(model10)
+chas <- as.factor(chas)
+model11 <- lm(crim ~ chas)
+summary(model11)
+model12 <- lm(crim ~ nox)
+summary(model12)
+fit.rm <- lm(crim ~ rm)
+summary(fit.rm)
+model13 <- lm(crim ~ age)
+summary(model13)
+model14 <- lm(crim ~ dis)
+summary(model14)
+model15 <- lm(crim ~ rad)
+summary(model15)
+model16 <- lm(crim ~ tax)
+summary(model16)
+model17 <- lm(crim ~ ptratio)
+summary(model17)
+model18 <- lm(crim ~ lstat)
+summary(model18)
+model19 <- lm(crim ~ medv)
+summary(model19)
+```
+
+Each predictors besides "chas" has a p-value of less than 0.05, indicating that there is a statistically significant association between those predictors and the response.
+
+```{r}
+plot(chas,crim)
+abline(model11)
+```
+
+```{r}
+plot(zn,crim)
+abline(model9)
+```
+
+
+(b) Fit a multiple regression model to predict the response using all of the predictors. Describe your results. For which predictors can we reject the null hypothesis $H_0 : \beta_j = 0$?
+
+```{r}
+model.all.variables <- lm(crim ~ ., data = Boston)
+summary(model.all.variables)
+```
+
+A relatively low R squared value suggests that this MLR model does not fit the data well. In this fitted multiple regression model "zn", "dis", "rad", and "medv" are found to be statistically significant. The other variables have high p-values and we do not reject the null hypothesis for them. Thus, we reject the null hypothesis for “zn”, ”dis”, ”rad”, and “medv”.
+
+(c) How do your results from (a) compare to your results from (b)? Create a plot displaying the univariate regression coefficients from (a) on the x-axis, and the multiple regression coefficients from (b) on the y-axis. That is, each predictor is displayed as a single point in the plot. Its coefficient in a simple linear regression model is shown on the x-axis, and its coefficient estimate in the multiple linear regression model is shown on the y-axis.
+
+```{r}
+regression <- vector("numeric",0)
+regression <- c(regression, model9$coefficient[2])
+regression <- c(regression, model10$coefficient[2])
+regression <- c(regression, model11$coefficient[2])
+regression <- c(regression, model12$coefficient[2])
+regression <- c(regression, model13$coefficient[2])
+regression <- c(regression, model14$coefficient[2])
+regression <- c(regression, model15$coefficient[2])
+regression <- c(regression, model16$coefficient[2])
+regression <- c(regression, model17$coefficient[2])
+regression <- c(regression, model18$coefficient[2])
+regression <- c(regression, model19$coefficient[2])
+multiple.regression <- vector("numeric", 0)
+multiple.regression <- c(multiple.regression, model.all.variables$coefficients)
+multiple.regression <- multiple.regression[-1]
+
+#plot(regression, multiple.regression)
+plot(regression, multiple.regression[1:length(regression)])
+
+#unsure why original plot will not work - error says x and y lengths differ
+```
+
+The results differ because univariate regression and multiple regression have significantly different coefficients. The slope of the univariate regression model shows the average effect of an increase in the predictor while ignoring all the other predictors from the dat However, the multiple regression holds other predictors fixed, and the slope represents the average effect of an increase in the predictor.
+
+(d) Is there evidence of non-linear association between any of the predictors and the response? To answer this question, for each predictor X, fit a model of the form
+\[
+Y = \beta_0 +\beta_1X +\beta_2X^2 +\beta_3X^3 + \epsilon.
+\]
+
+```{r}
+model.1 <- lm(crim ~ poly(zn, 3))
+summary(model.1)
+model.2 <- lm(crim ~ poly(indus, 3))
+summary(model.2)
+model.3 <- lm(crim ~ poly(nox, 3))
+summary(model.3)
+model.4 <- lm(crim ~ poly(rm, 3))
+summary(model.4)
+model.5 <- lm(crim ~ poly(age, 3))
+summary(model.5)
+model.6 <- lm(crim ~ poly(dis, 3))
+summary(model.6)
+model.7 <- lm(crim ~ poly(rad, 3))
+summary(model.7)
+model.8 <- lm(crim ~ poly(tax, 3))
+summary(model.8)
+model.9 <- lm(crim ~ poly(ptratio, 3))
+summary(model.9)
+model.10 <- lm(crim ~ poly(lstat, 3))
+summary(model.10)
+model.11 <- lm(crim ~ poly(medv, 3))
+summary(model.11)
+```
+
+Based on the model, the p-values for “indus”, “nox”, “age”, “dis”, “ptratio” and “medv” suggest these predictors are statistically significant. However, I do not spot evidence of non-linearity.

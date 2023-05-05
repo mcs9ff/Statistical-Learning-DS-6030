@@ -1,0 +1,454 @@
+---
+title: "DS-6030 Homework Module 7"
+author: "Matt Scheffel"
+output:
+  pdf_document:
+    toc: no
+---
+
+<!--- Below are global settings for knitr. You can override any of them by adding the changes to individual chunks --->
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=TRUE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.width = 5.5,     # set figure width
+                      fig.align = "center",# set figure position
+                      out.width = "49%", # set width of displayed images
+                      warning=FALSE,     # do not show R warnings
+                      message=FALSE)     # do not show R messages
+```
+
+<!--- Change font size for headers --->
+<style>
+h1.title { font-size: 28px; }
+h1 { font-size: 22px; }
+h2 { font-size: 18px; }
+h3 { font-size: 14px; }
+</style>
+
+**DS 6030 | Spring 2022 | University of Virginia **
+
+
+# 8. In the lab, a classification tree was applied to the Carseats data set after converting Sales into a qualitative response variable. 
+
+Now we will seek to predict Sales using regression trees and related approaches, treating the response as a quantitative variable.
+
+```{r}
+# packages
+
+#install.packages("tree")
+#install.packages("randomForest")
+
+library("tree")
+library("ISLR2")
+attach(Carseats)
+library(randomForest)
+library(caret)
+```
+
+
+(a) Split the data set into a training set and a test set.
+
+```{r}
+set.seed(123)
+
+train <- createDataPartition(Carseats$Sales, p = 0.7, list = FALSE)
+
+# training and test sets
+
+car_train <- Carseats[train, ]
+car_test <- Carseats[-train, ]
+```
+
+
+(b) Fit a regression tree to the training set. Plot the tree, and interpret the results. What test MSE do you obtain?
+
+```{r}
+car_tree <- tree(Sales ~ ., data = car_train)
+
+plot(car_tree)
+
+text(car_tree, pretty=0)
+```
+
+```{r}
+summary(car_tree)
+```
+
+```{r}
+car_pred <- predict(car_tree, newdata = car_test)
+
+# MSE
+mean((car_pred - car_test$Sales)^2)
+```
+
+The MSE is 4.638469. This indicates that the regression tree model has a moderate level of prediction error when applied to the test set. 
+
+The residual mean deviance of the tree is 2.379, which indicates that the model has an average squared difference of 2.379 between the predicted and true sales values.
+
+The median value of -0.02316 indicates that the model is able to predict sales accurately for half of the observations in the test set, while the mean value of 0 indicates that the model has no bias towards over- or under-predicting sales. The range of residuals (from -4.139 to 3.515) indicates that the model has some outliers or extreme values that are not well predicted by the tree.
+
+(c) Use cross-validation in order to determine the optimal level of tree complexity. Does pruning the tree improve the test MSE?
+
+
+```{r}
+# fit regression tree using cross-validation to determine optimal tree complexity
+library(tree)
+
+# fit regression tree
+tree_fit <- tree(Sales ~ ., data = car_train)
+
+# perform cross-validation to determine optimal tree size
+car_CV <- cv.tree(tree_fit)
+
+# plot cross-validation error rate vs tree size
+plot(car_CV$size, car_CV$dev, type = 'b', xlab = 'Tree Size', ylab = 'Cross-Validation Error')
+
+# determine optimal tree size
+optimal_size <- which.min(car_CV$dev)
+print(paste("Optimal Tree Size:", optimal_size))
+
+# prune tree using optimal size
+pruned_tree_fit <- prune.tree(tree_fit, best = optimal_size)
+
+# check if pruned tree has only one node
+if (nrow(pruned_tree_fit$frame) == 1) {
+  # predict mean value of response variable for test data
+  pruned_pred <- mean(car_train$Sales)
+} else {
+  # predict sales on test set using pruned tree
+  pruned_pred <- predict(pruned_tree_fit, newdata = car_test[, colnames(car_train)[-1]])
+}
+
+# calculate test MSE for pruned tree
+pruned_test_mse <- mean((pruned_pred - car_test$Sales)^2)
+print(paste("Pruned Tree Test MSE:", pruned_test_mse))
+
+# predict sales on test set using unpruned tree
+tree_pred <- predict(tree_fit, newdata = car_test[, colnames(car_train)[-1]])
+
+# calculate test MSE for unpruned tree
+tree_test_mse <- mean((tree_pred - car_test$Sales)^2)
+print(paste("Unpruned Tree Test MSE:", tree_test_mse))
+
+```
+
+
+```{r}
+par(mfrow = c(1,1))
+
+# chose 8 as the best tree size
+# 1 is too small despite being the minimum
+
+prune_car <- prune.tree(car_tree, best = 8)
+plot(prune_car)
+text(prune_car, pretty = 0)
+```
+
+```{r}
+prune_car_prediction <- predict(prune_car, newdata = car_test)
+mean((prune_car_prediction - car_test$Sales)^2)
+```
+
+Pruning the tree made the MSE worse in thisd scenario - jumping up to over 8.
+
+(d) Use the bagging approach in order to analyze this data. What test MSE do you obtain? Use the `importance()` function to determine which variables are most important.
+
+```{r}
+set.seed(123)
+
+car_bagging <- randomForest(Sales ~ ., data = Carseats, subset = train, mtry = 10, importance = TRUE)
+
+car_bagging
+```
+
+```{r}
+car_bagging_prediction <- predict(car_bagging, newdata = car_test)
+mean((car_bagging_prediction - car_test$Sales)^2)
+```
+
+Using the bagging approach, the test MSE is 2.506079. This is lower than both the pruned tree and the original tree. This makes sense since the bagging method is designed to have lower bias and variance. It achieves this through the combination of several trees into one procedure.
+
+```{r}
+# importance
+importance(car_bagging)
+```
+
+```{r}
+# plot
+varImpPlot(car_bagging)
+```
+
+From the importance function and plot, we can see that shelf location and price are the most important predictors of how well a car seat sells. Competitor price, age, and advertising budget also have reasonable impacts, with the remaining variables holding less importance.
+
+(e) Use random forests to analyze this data. What test MSE do you obtain? Use the `importance()` function to determine which variables are most important. Describe the effect of m, the number of variables considered at each split, on the error rate obtained.
+
+```{r}
+set.seed(123)
+
+random_forest_car_1 <- randomForest(Sales ~ ., data = Carseats, subset = train, mtry = 1, importance = TRUE)
+
+random_forest_prediction_1 <- predict(random_forest_car_1, newdata = car_test)
+mean((random_forest_prediction_1 - car_test$Sales)^2)
+```
+
+We obtain an MSE of 4.97386 for m = 1.
+
+```{r}
+set.seed(123)
+
+random_forest_car_2 <- randomForest(Sales ~ ., data = Carseats, subset = train, mtry = 2, importance = TRUE)
+
+random_forest_prediction_2 <- predict(random_forest_car_2, newdata = car_test)
+mean((random_forest_prediction_2 - car_test$Sales)^2)
+```
+
+We obtain an MSE of 3.467817 for m = 2.
+
+```{r}
+set.seed(123)
+
+random_forest_car_ <- randomForest(Sales ~ ., data = Carseats, subset = train, mtry = 3, importance = TRUE)
+
+random_forest_prediction_ <- predict(random_forest_car_, newdata = car_test)
+mean((random_forest_prediction_ - car_test$Sales)^2)
+```
+
+We obtain an MSE of 2.84 for m = 3.
+
+```{r}
+set.seed(123)
+
+random_forest_car_4 <- randomForest(Sales ~ ., data = Carseats, subset = train, mtry = 4, importance = TRUE)
+
+random_forest_prediction_4 <- predict(random_forest_car_4, newdata = car_test)
+mean((random_forest_prediction_4 - car_test$Sales)^2)
+```
+
+We obtain an MSE of 2.682774 for m = 4.
+
+The MSE continues declining as m increases towards 10.
+
+```{r}
+set.seed(123)
+random_forest_car_9 <- randomForest(Sales ~ ., data = Carseats, subset = train, mtry = 9, importance = TRUE)
+
+random_forest_prediction_9 <-predict(random_forest_car_9, newdata = car_test)
+mean((random_forest_prediction_9 - car_test$Sales)^2)
+```
+
+We obtain an MSE of 2.537588 for m = 9.
+
+```{r}
+importance(random_forest_car_)
+```
+
+```{r}
+varImpPlot(random_forest_car_)
+```
+
+For the random forests model, it appears that shelf location and price are again the most important predictors, but age and advertising also to have some importance again. Competitor prices appear to have less of an impact than they did in the bagging model. Income also appears to have more of an impact in the random forests model than it did in the bagging model.
+
+(f) Now analyze the data using BART, and report your results. (skip this exercise)
+
+# skip
+
+# 9. This problem involves the OJ data set which is part of the ISLR package.
+
+(a) Create a training set containing a random sample of 800 observations, and a test set containing the remaining observations.
+
+```{r}
+set.seed(123)
+
+# index for the training set (800 observations)
+train_index <- sample(nrow(OJ), 800)
+
+# training set and test set
+train_data <- OJ[train_index, ]
+test_data <- OJ[-train_index, ]
+```
+
+(b) Fit a tree to the training data, with Purchase as the response and the other variables as predictors. Use the `summary()` function to produce summary statistics about the tree, and describe the results obtained. What is the training error rate? How many terminal nodes does the tree have?
+
+```{r}
+# fit the tree
+tree_fit <- tree(Purchase ~ ., data = train_data)
+
+summary(tree_fit)
+```
+
+The training error rate is 16.5%.
+
+The tree has 8 terminal nodes.
+
+A residual mean deviance of 0.7625 indicates that there is still a substantial amount of unexplained variation in the data. 
+
+(c) Type in the name of the tree object in order to get a detailed text output. Pick one of the terminal nodes, and interpret the information displayed.
+
+```{r}
+tree_fit
+```
+
+Selected terminal node: 10) PriceDiff < 0.05 74   74.61 MM ( 0.20270 0.79730 ) *
+
+Interpretation: 
+
+PriceDiff < 0.05: This is the split rule that determines which observations end up in this terminal node. Specifically, it means that the node corresponds to a group of observations where the absolute difference between the regular price and the actual price of the orange juice is less than 0.05 units.
+
+74: This is the number of observations that fall into this terminal node.
+
+74.61: This is the mean value of the response variable (the purchase outcome) for the 74 observations in this node.
+
+MM: This is the most common class label in this node (the purchase outcome that appears most frequently).
+
+(0.20270 0.79730): This is the proportion of observations in this node that belong to each of the two classes. In this case, 20.27% of the 74 observations in this node purchased the brand other than "MM", while 79.73% of the 74 observations in this node purchased "MM".
+
+Overall, this terminal node suggests that for customers who have a small absolute difference between the regular and actual price of the orange juice (less than 0.05 units), the majority of them tend to purchase the "MM" brand. The node also provides information about the proportion of observations that belong to each of the two classes (other than "MM" and "MM") in this group.
+
+(d) Create a plot of the tree, and interpret the results.
+
+```{r}
+plot(tree_fit)
+text(tree_fit, pretty = 0)
+```
+
+In the context of the OJ data set, the tree plot shows how different variables such as price, advertising, and price difference between regular and actual price, affect the purchase behavior of customers. The plot suggests that the most important factor for predicting purchase behavior is the price of the juice, followed by the advertising budget.
+
+(e) Predict the response on the test data, and produce a confusion matrix comparing the test labels to the predicted test labels. What is the test error rate?
+
+```{r}
+# predict
+test_pred <- predict(tree_fit, newdata = test_data, type = "class")
+
+# confusion matrix
+conf_matrix <- table(test_data$Purchase, test_pred)
+conf_matrix
+```
+
+```{r}
+test_error <- (conf_matrix[1,2] + conf_matrix[2,1]) / sum(conf_matrix)
+test_error
+```
+
+The test error rate is 18.5%.
+
+(f) Apply the `cv.tree()` function to the training set in order to determine the optimal tree size.
+
+```{r}
+# cross-validation
+cv_fit <- cv.tree(tree_fit)
+
+cv_fit
+```
+
+```{r}
+# prune the tree using the optimal cp value
+pruned_tree_fit <- prune.tree(tree_fit, best = cv_fit$cp[which.min(cv_fit$dev)])
+```
+
+```{r}
+# plot
+
+plot(pruned_tree_fit, main = "Pruned Regression Tree")
+```
+
+The optimal tree size appears to be around 8.
+
+(g) Produce a plot with tree size on the x-axis and cross-validated classification error rate on the y-axis.
+
+```{r}
+# extract the cross-validation results
+cv_results <- data.frame(size = cv_fit$size, error_rate = cv_fit$dev)
+
+# plot the cross-validation error rate by tree size
+plot(cv_results$size, cv_results$error_rate, type = "b", 
+     xlab = "Tree Size", ylab = "CV Error Rate",
+     main = "Cross-Validated Classification Error")
+
+# add vertical line at optimal tree size
+abline(v = cv_fit$size[which.min(cv_fit$dev)], col = "red")
+```
+
+
+(h) Which tree size corresponds to the lowest cross-validated classification error rate?
+
+```{r}
+# extract the optimal tree size
+optimal_size <- cv_results$size[which.min(cv_results$error_rate)]
+
+# print the optimal tree size
+print(optimal_size)
+```
+
+A tree size of 6 corresponds to the lowest cross-validated classification error rate.
+
+(i) Produce a pruned tree corresponding to the optimal tree size obtained using cross-validation. If cross-validation does not lead to selection of a pruned tree, then create a pruned tree with five terminal nodes.
+
+```{r}
+# prune the tree using the optimal cp value
+pruned_tree_fit <- prune.tree(tree_fit, best = optimal_size)
+
+# plot the pruned tree
+plot(pruned_tree_fit)
+text(pruned_tree_fit, all = TRUE, cex = 0.8)
+```
+
+(j) Compare the training error rates between the pruned and unpruned trees. Which is higher?
+
+```{r}
+# predict class labels for unpruned tree on training set
+unpruned_train_pred <- predict(tree_fit, type = "class")
+
+# generate confusion matrix for unpruned tree on training set
+unpruned_train_conf <- table(train_data$Purchase, unpruned_train_pred)
+print(unpruned_train_conf)
+
+# calculate training error rate for unpruned tree
+unpruned_train_error <- 1 - sum(diag(unpruned_train_conf)) / sum(unpruned_train_conf)
+print(paste("Unpruned tree training error rate:", unpruned_train_error))
+
+# predict class labels for pruned tree on training set
+pruned_train_pred <- predict(pruned_tree_fit, type = "class")
+
+# generate confusion matrix for pruned tree on training set
+pruned_train_conf <- table(train_data$Purchase, pruned_train_pred)
+print(pruned_train_conf)
+
+# calculate training error rate for pruned tree
+pruned_train_error <- 1 - sum(diag(pruned_train_conf)) / sum(pruned_train_conf)
+print(paste("Pruned tree training error rate:", pruned_train_error))
+```
+
+The error rates appear to be the same.
+
+(k) Compare the test error rates between the pruned and unpruned trees. Which is higher?
+
+```{r}
+# predict class labels for unpruned tree on test set
+unpruned_test_pred <- predict(tree_fit, newdata = test_data, type = "class")
+
+# generate confusion matrix for unpruned tree on test set
+unpruned_test_conf <- table(test_data$Purchase, unpruned_test_pred)
+print(unpruned_test_conf)
+
+# calculate test error rate for unpruned tree
+unpruned_test_error <- 1 - sum(diag(unpruned_test_conf)) / sum(unpruned_test_conf)
+print(paste("Unpruned tree test error rate:", unpruned_test_error))
+
+# predict class labels for pruned tree on test set
+pruned_test_pred <- predict(pruned_tree_fit, newdata = test_data, type = "class")
+
+# generate confusion matrix for pruned tree on test set
+pruned_test_conf <- table(test_data$Purchase, pruned_test_pred)
+print(pruned_test_conf)
+
+# calculate test error rate for pruned tree
+pruned_test_error <- 1 - sum(diag(pruned_test_conf)) / sum(pruned_test_conf)
+print(paste("Pruned tree test error rate:", pruned_test_error))
+
+```
+
+The error rates appear to be the same.

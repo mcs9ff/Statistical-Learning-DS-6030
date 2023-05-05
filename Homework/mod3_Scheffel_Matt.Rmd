@@ -1,0 +1,350 @@
+---
+title: "DS-6030 Homework Module 3"
+author: "Matt Scheffel"
+output:
+  pdf_document:
+    toc: no
+---
+
+<!--- Below are global settings for knitr. You can override any of them by adding the changes to individual chunks --->
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=TRUE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.width = 5.5,     # set figure width
+                      fig.align = "center",# set figure position
+                      out.width = "49%", # set width of displayed images
+                      warning=FALSE,     # do not show R warnings
+                      message=FALSE)     # do not show R messages
+```
+
+<!--- Change font size for headers --->
+<style>
+h1.title { font-size: 28px; }
+h1 { font-size: 22px; }
+h2 { font-size: 18px; }
+h3 { font-size: 14px; }
+</style>
+
+**DS 6030 | Spring 2022 | University of Virginia **
+
+
+# 5. We now examine the differences between LDA and QDA.
+
+(a) If the Bayes decision boundary is linear, do we expect LDA or QDA to perform better on the training set? On the test set?
+
+If the Bayes decision boundary is linear, we expect QDA to perform better on the training set. QDA has higher flexibility and more parameters, allowing it to fit the training set data better.
+
+We would expect LDA to perform better on the test set, as using QDA on the test set may result in overfitting the line.
+
+(b) If the Bayes decision boundary is non-linear, do we expect LDA or QDA to perform better on the training set? On the test set?
+
+If the Bayes decision boundary is non-linear,  we expect QDA to perform better on both the training set and the test set. This is due to the higher flexibility of QDA.
+
+(c) In general, as the sample size n increases, do we expect the test prediction accuracy of QDA relative to LDA to improve, decline, or be unchanged? Why?
+
+Typically, as the sample size n increases, we would expect the test prediction accuracy of QDA relative to LDA to improve. This is because QDA is a more flexible model than LDA.
+
+However, in this situation, the test prediction accuracy of QDA relative to LDA tends to be uncertain. The improvement in accuracy depends on the Bayes decision boundary. If the boundary is linear, LDA typically performs better as n increases. But if the boundary is non-linear, we would expect the prediction accuracy of QDA relative to LDA to improve.
+
+Ultimately, as the sample size n grows increasingly large, the difference in performance between QDA and LDA may become negligible.
+
+(d) True or False: Even if the Bayes decision boundary for a given problem is linear, we will probably achieve a superior test error rate using QDA rather than LDA because QDA is flexible enough to model a linear decision boundary. Justify your answer.
+
+False. If the Bayes decision boundary for a given problem is linear, we would expect LDA to achieve a superior test error rate compared to QDA. In this situation, using LDA would simplify the model and reduce the risk of overfitting when the sample size is small or when there are many predictors relative to the sample size. QDA is more flexible and may result in overfitting when the sample size is small or the number of predictors is large. Ultimately, when the Bayes decision boundary is linear, LDA would likely result in a superior test error rate in comparison to QDA.
+
+
+# 13. This question should be answered using the `Weekly` data set, which is part of the ISLR2 package. 
+This data is similar in nature to the `Smarket` data from this chapter’s lab, except that it contains 1,089 weekly returns for 21 years, from the beginning of 1990 to the end of 2010.
+
+(a) Produce some numerical and graphical summaries of the `Weekly` data. Do there appear to be any patterns?
+
+```{r}
+#numerical summaries
+library(ISLR2)
+library(MASS)
+library(class)
+
+summary(Weekly)
+
+cor(Weekly[ ,-9])
+```
+
+```{r}
+#graphical summaries
+library(corrplot)
+
+corrplot(cor(Weekly[,-9]))
+pairs(Weekly)
+```
+
+Most of the variables tend to have no correlation or pattern aside from a noticeable relationship between Volume and Year.
+
+(b) Use the full data set to perform a logistic regression with `Direction` as the response and the five lag variables plus `Volume` as predictors. Use the summary function to print the results. Do any of the predictors appear to be statistically significant? If so, which ones?
+
+```{r}
+weekly_log_reg <- glm(Direction ~ Lag1 + Lag2 + Lag3 + Lag4 + Lag5 + Volume,
+                  data = Weekly, 
+                  family = binomial)
+
+summary(weekly_log_reg)
+```
+
+The only predictor that appears to be statistically significant (at the 0.05 level) is Lag2. 
+
+(c) Compute the confusion matrix and overall fraction of correct predictions. Explain what the confusion matrix is telling you about the types of mistakes made by logistic regression.
+
+```{r}
+weekly_log_prob = predict(weekly_log_reg, type = "response")
+weekly_log_pred = rep("Down", length(weekly_log_prob)) 
+weekly_log_pred[weekly_log_prob > 0.5] <- "Up"
+
+table(weekly_log_pred, Weekly$Direction)
+
+correct_preds = mean(weekly_log_pred == Weekly$Direction)
+correct_preds
+```
+
+The confusion matrix is telling us:
+
+Approximately 56.11% of the responses are predicted correctly.
+The model correctly predicted 54 out of 484 down days accurately (approx. 11%).
+The model correctly predicted 557 out of 605 up days (approx. 92%).
+
+(d) Now fit the logistic regression model using a training data period from 1990 to 2008, with Lag2 as the only predictor. Compute the confusion matrix and the overall fraction of correct predictions for the held out data (that is, the data from 2009 and 2010).
+
+```{r}
+training_data = (Weekly$Year < 2009)
+
+weekly_heldout <- Weekly[!training_data,]
+
+model_1_fit <- glm(Direction ~ Lag2, data = Weekly,family = binomial, subset = training_data)
+
+weekly_log_prob= predict(model_1_fit, weekly_heldout, type = "response")
+weekly_log_pred = rep("Down", length(weekly_log_prob))
+weekly_log_pred[weekly_log_prob > 0.5] = "Up"
+
+direction_heldout = Weekly$Direction[!training_data]
+
+table(weekly_log_pred, direction_heldout)
+
+mean(weekly_log_pred == direction_heldout)
+```
+
+(e) Repeat (d) using LDA.
+
+```{r}
+model_lda_fit <-lda(Direction ~ Lag2, data = Weekly, subset = training_data)
+model_lda_pred <-predict(model_lda_fit, weekly_heldout)
+
+table(model_lda_pred$class, direction_heldout)
+mean(model_lda_pred$class==direction_heldout)
+```
+
+
+(f) Repeat (d) using QDA.
+
+```{r}
+model_qda_fit <-qda(Direction ~ Lag2, data = Weekly, subset = training_data)
+model_qda_pred <-predict(model_qda_fit, weekly_heldout)
+
+table(model_qda_pred$class, direction_heldout)
+mean(model_qda_pred$class==direction_heldout)
+```
+
+(g) Repeat (d) using KNN with $K=1$.
+
+```{r}
+knn_train <- as.matrix(Weekly$Lag2[training_data])
+knn_test <- as.matrix(Weekly$Lag2[!training_data])
+direction_train = Weekly$Direction[training_data]
+
+set.seed(1)
+knn_pred <- knn(knn_train, knn_test, direction_train, k = 1)
+
+table(knn_pred, direction_heldout)
+mean(knn_pred == direction_heldout)
+```
+
+
+(h) Repeat (d) using naive Bayes. (skip this exercise)
+
+#skip
+
+(i) Which of these methods appears to provide the best results on this data?
+
+The Logistic Regression and Linear Discriminant Analysis methods appear to provide the best results on this data as both produce accuracy rates of 62.5%.
+
+(j) Experiment with different combinations of predictors, including possible transformations and interactions, for each of the methods. Report the variables, method, and associated confusion matrix that appears to provide the best results on the held out data. Note that you should also experiment with values for $K$ in the KNN classifier.
+
+```{r}
+new_model_1 <- glm(Direction ~ Lag2:Lag1, data = Weekly, family = binomial, subset = training_data)
+
+weekly_log_prob= predict(new_model_1, weekly_heldout, type = "response")
+weekly_log_pred = rep("Down", length(weekly_log_prob))
+weekly_log_pred[weekly_log_prob > 0.5] = "Up"
+
+direction_heldout = Weekly$Direction[!training_data]
+
+table(weekly_log_pred, direction_heldout)
+
+mean(weekly_log_pred == direction_heldout)
+```
+
+```{r}
+model_lda_fit2 <-lda(Direction ~ Lag2:Lag1, data = Weekly, subset = training_data)
+model_lda_pred2 <-predict(model_lda_fit2, weekly_heldout)
+
+table(model_lda_pred2$class, direction_heldout)
+mean(model_lda_pred2$class==direction_heldout)
+```
+
+```{r}
+model_qda_fit2 <-qda(Direction ~ Lag2 + sqrt(abs(Lag2)), data = Weekly, subset = training_data)
+model_qda_pred2 <-predict(model_qda_fit2, weekly_heldout)
+
+table(model_qda_pred2$class, direction_heldout)
+mean(model_qda_pred2$class==direction_heldout)
+```
+
+```{r}
+knn_train2 <- as.matrix(Weekly$Lag2[training_data])
+knn_test2 <- as.matrix(Weekly$Lag2[!training_data])
+direction_train = Weekly$Direction[training_data]
+
+set.seed(1)
+knn_pred2 <- knn(knn_train2, knn_test2, direction_train, k = 5)
+
+table(knn_pred2, direction_heldout)
+mean(knn_pred2 == direction_heldout)
+```
+
+```{r}
+knn_train3 <- as.matrix(Weekly$Lag2[training_data])
+knn_test3 <- as.matrix(Weekly$Lag2[!training_data])
+direction_train = Weekly$Direction[training_data]
+
+set.seed(1)
+knn_pred3 <- knn(knn_train3, knn_test3, direction_train, k = 10)
+
+table(knn_pred3, direction_heldout)
+mean(knn_pred3 == direction_heldout)
+```
+
+After experimenting with different combinations of predictors, including possible transformations and interactions, for each of the methods, it appears that the original models produce the best results and highest accuracy rates.
+
+# 14. In this problem, you will develop a model to predict whether a given car gets high or low gas mileage based on the `Auto` data set.
+
+
+(a) Create a binary variable, `mpg01`, that contains a 1 if `mpg` contains a value above its median, and a 0 if `mpg` contains a value below its median. You can compute the median using the `median()` function. Note you may find it helpful to use the `data.frame()` function to create a single data set containing both `mpg01` and the other `Auto` variables.
+
+```{r}
+attach(Auto)
+summary(Auto)
+
+mpg01 <- rep(0, length(Auto$mpg))
+mpg01[Auto$mpg > median(Auto$mpg)] <- 1
+
+auto_new = data.frame(Auto, mpg01)
+```
+
+
+(b) Explore the data graphically in order to investigate the association between `mpg01` and the other features. Which of the other features seem most likely to be useful in predicting `mpg01`? Scatterplots and boxplots may be useful tools to answer this question. Describe your findings.
+
+```{r}
+corrplot(cor(auto_new[,-9]))
+pairs(auto_new)
+```
+
+From the visualizations, it appears that mpg01 has strong negative correlation with cylinders, displacement, horsepower, and weight. There is slight positive correlation with acceleration, year, and origin. (Obviously mpg also has strong correlation with mpg01.)
+
+(c) Split the data into a training set and a test set.
+
+```{r}
+training_data_2 <- (auto_new$year %% 2 == 0)
+auto_train <- auto_new[training_data_2,]
+auto_test <- auto_new[-training_data_2,]
+
+auto_train2 <- auto_train[complete.cases(auto_train),]
+auto_test2 <- auto_test[complete.cases(auto_test),]
+```
+
+
+(d) Perform LDA on the training data in order to predict `mpg01` using the variables that seemed most associated with `mpg01` in (b). What is the test error of the model obtained?
+
+```{r}
+auto_lda_fit <- lda(mpg01~displacement+horsepower+weight+year+cylinders+origin, data=auto_train)
+auto_lda_pred <- predict(auto_lda_fit, auto_test)
+
+mean(auto_lda_pred$class != auto_test$mpg01)
+testerror = 1 - mean(auto_lda_pred$class != auto_test$mpg01)
+testerror
+table(auto_lda_pred$class, auto_test$mpg01)
+```
+
+The test error rate is 8.4%.
+
+(e) Perform QDA on the training data in order to predict `mpg01` using the variables that seemed most associated with `mpg01` in (b). What is the test error of the model obtained?
+
+```{r}
+auto_qda_fit <- qda(mpg01~displacement+horsepower+weight+year+cylinders+origin, data=auto_train)
+auto_qda_pred <- predict(auto_qda_fit, auto_test)
+
+mean(auto_qda_pred$class != auto_test$mpg01)
+testerror = 1 - mean(auto_qda_pred$class != auto_test$mpg01)
+testerror
+table(auto_qda_pred$class, auto_test$mpg01)
+```
+
+The test error rate is 9.9%.
+
+(f) Perform logistic regression on the training data in order to predict `mpg01` using the variables that seemed most associated with `mpg01` in (b). What is the test error of the model obtained?
+
+```{r}
+auto_log_reg <- glm(mpg01 ~ displacement + horsepower + weight + year + cylinders + origin, data = auto_train, family = binomial)
+auto_log_prob = predict(auto_log_reg, auto_test, type = "response")
+auto_log_pred = rep(0, length(auto_log_prob))
+auto_log_pred[auto_log_prob > 0.5] = 1
+
+mean(auto_log_pred != auto_test$mpg01)
+testerror = 1 - mean(auto_log_pred != auto_test$mpg01)
+testerror
+table(auto_log_pred, auto_test$mpg01)
+```
+
+The test error is 8.4%.
+
+(g) Perform naive Bayes on the training data in order to predict `mpg01` using the variables that seemed most associated with `mpg01` in (b). What is the test error of the model obtained? (skip this exercise)
+
+#skip
+
+(h) Perform KNN on the training data, with several values of $K$, in order to predict `mpg01`. Use only the variables that seemed most associated with `mpg01` in (b). What test errors do you obtain? Which value of $K$ seems to perform the best on this data set?
+
+```{r}
+auto_knn_train = cbind(displacement, horsepower, weight, cylinders, year, origin)[training_data_2,]
+auto_knn_test=cbind(displacement,horsepower,weight,cylinders, year, origin)[-training_data_2,]
+set.seed(1)
+autok.pred=knn(auto_knn_train, auto_knn_test, auto_train$mpg01, k = 1)
+mean(autok.pred != auto_test$mpg01)
+```
+
+```{r}
+auto_knn_train = cbind(displacement, horsepower, weight, cylinders, year, origin)[training_data_2,]
+auto_knn_test=cbind(displacement,horsepower,weight,cylinders, year, origin)[-training_data_2,]
+set.seed(1)
+autok.pred=knn(auto_knn_train, auto_knn_test, auto_train$mpg01, k = 5)
+mean(autok.pred != auto_test$mpg01)
+```
+
+```{r}
+auto_knn_train = cbind(displacement, horsepower, weight, cylinders, year, origin)[training_data_2,]
+auto_knn_test=cbind(displacement,horsepower,weight,cylinders, year, origin)[-training_data_2,]
+set.seed(1)
+autok.pred=knn(auto_knn_train, auto_knn_test, auto_train$mpg01, k = 10)
+mean(autok.pred != auto_test$mpg01)
+```
+
+K = 1 has the lowest error rate of 7.16%. For this model it appears that as K increases, the error rate also increases.

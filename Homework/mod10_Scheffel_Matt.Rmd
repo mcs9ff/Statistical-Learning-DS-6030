@@ -1,0 +1,145 @@
+---
+title: "DS-6030 Homework Module 10"
+author: "Matt Scheffel"
+output:
+  pdf_document:
+    toc: no
+---
+
+<!--- Below are global settings for knitr. You can override any of them by adding the changes to individual chunks --->
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=TRUE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.width = 5.5,     # set figure width
+                      fig.align = "center",# set figure position
+                      out.width = "49%", # set width of displayed images
+                      warning=FALSE,     # do not show R warnings
+                      message=FALSE)     # do not show R messages
+```
+
+<!--- Change font size for headers --->
+<style>
+h1.title { font-size: 28px; }
+h1 { font-size: 22px; }
+h2 { font-size: 18px; }
+h3 { font-size: 14px; }
+</style>
+
+**DS 6030 | Spring 2022 | University of Virginia **
+
+```{r}
+library(ISLR)
+library(tidyverse)
+```
+
+
+# 8. In Section 12.2.3, a formula for calculating PVE was given in Equation 12.10. 
+We also saw that the PVE can be obtained using the `sdev` output of the `prcomp()` function.
+
+On the `USArrests` data, calculate PVE in two ways:
+
+(a) Using the `sdev` output of the `prcomp()` function, as was done in Section 12.2.3.
+
+```{r}
+data(USArrests)
+
+pca <- prcomp(USArrests, scale = TRUE)
+
+# PVE
+pve <- pca$sdev^2/sum(pca$sdev^2)
+
+pve
+```
+
+
+(b) By applying Equation 12.10 directly. That is, use the `prcomp()` function to compute the principal component loadings. Then, use those loadings in Equation 12.10 to obtain the PVE.
+
+These two approaches should give the same results.
+
+_Hint: You will only obtain the same results in (a) and (b) if the same data is used in both cases. For instance, if in (a) you performed `prcomp()` using centered and scaled variables, then you must center and scale the variables before applying Equation 10.3 in (b)._
+
+```{r}
+data(USArrests)
+
+# PCA
+pca <- prcomp(USArrests, scale = TRUE)
+
+# calculate principal component loadings
+loadings <- pca$rotation
+
+# center and scale variables
+x <- scale(USArrests)
+
+# calculate covariance matrix of x
+cov_x <- cov(x)
+
+# calculate eigenvalues and eigenvectors of covariance matrix
+eig <- eigen(cov_x)
+
+# calculate total variance
+total_var <- sum(eig$values)
+
+# calculate PVE using Equation 12.10
+pve <- eig$values/total_var
+
+# print PVE
+pve
+```
+
+# 9. Consider the USArrests data. 
+We will now perform hierarchical clustering on the states.
+
+(a) Using hierarchical clustering with complete linkage and Euclidean distance, cluster the states.
+
+```{r}
+data(USArrests)
+
+# Euclidean distance matrix
+dist_mat <- dist(USArrests)
+
+# hierarchical clustering with complete linkage
+hc_complete <- hclust(dist_mat, method = "complete")
+
+# dendrogram
+plot(hc_complete, main = "USArrests Hierarchical Clustering (Complete Linkage)")
+```
+
+(b) Cut the dendrogram at a height that results in three distinct clusters. Which states belong to which clusters?
+
+```{r}
+# cut the dendrogram at height 150 to obtain 3 clusters
+clusters <- cutree(hc_complete, h = 150)
+
+# states belonging to each cluster
+cbind(State = rownames(USArrests), Cluster = clusters)
+```
+
+(c) Hierarchically cluster the states using complete linkage and Euclidean distance, after scaling the variables to have standard deviation one.
+
+```{r}
+data(USArrests)
+
+# scale variables to have standard deviation one
+scaled_data <- scale(USArrests)
+
+# calculate Euclidean distance matrix
+dist_mat <- dist(scaled_data)
+
+# hierarchical clustering with complete linkage
+hc_complete_scaled <- hclust(dist_mat, method = "complete")
+
+# dendrogram
+plot(hc_complete_scaled, main = "USArrests Hierarchical Clustering (Complete Linkage, Scaled)")
+```
+
+(d) What effect does scaling the variables have on the hierarchical clustering obtained? In your opinion, should the variables be scaled before the inter-observation dissimilarities are computed? Provide a justification for your answer.
+
+Scaling the variables before computing inter-observation dissimilarities has the effect of giving equal weight to each variable in the clustering process. If variables are not scaled, variables with larger variances will dominate the clustering, and variables with smaller variances will be largely ignored. Scaling the variables can help to avoid biases in the clustering process.
+
+Specific to the USArrests data, scaling the variables has the effect of making each variable directly comparable. Without scaling, variables such as Murder and Rape would have much larger variances than Assault and UrbanPop, and would therefore dominate the clustering process.
+
+Scaling the variables helps to avoid biases in the clustering process and ensures that each variable is given equal weight in the clustering. If the variables are on different scales, it is difficult to make meaningful comparisons between them. However, if there is a strong reason not to scale the variables, such as domain knowledge or prior research suggesting that a specific variable should be given more weight, then it may be appropriate not to scale the variables.

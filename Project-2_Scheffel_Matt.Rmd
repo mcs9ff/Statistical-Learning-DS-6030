@@ -1,0 +1,1292 @@
+---
+title: 'Disaster Relief Project: Part 1'
+author: "Matt Scheffel"
+output:
+  pdf_document:
+    toc: no
+    toc_depth: '2'
+  html_document:
+    toc: no
+    toc_depth: 2
+    toc_float: yes
+always_allow_html: true
+---
+
+<!--- Below are global settings for knitr. You can override any of them by adding the changes to individual chunks --->
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=TRUE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.width = 5.5,     # set figure width
+                      fig.align = "center",# set figure position
+                      out.width = "49%", # set width of displayed images
+                      warning=TRUE,      # show R warnings
+                      message=TRUE)      # show R messages
+```
+
+<!--- Change font sizes (or other css modifications) --->
+<style>
+h1.title { font-size: 2.2em; }
+h1 { font-size: 2em; }
+h2 { font-size: 1.5em; }
+h3 { font-size: 1.2em; }
+pre { font-size: 0.8em; }
+</style>
+
+
+
+**DS 6030 | Spring 2023 | University of Virginia **
+
+*******************************************
+
+# Introduction
+
+In this project, the task is to apply classification methods to solve a real data-mining problem, which involves locating displaced persons in makeshift shelters after the devastating earthquake in Haiti in 2010. Due to the challenging conditions of destroyed communications and impassable roads, it was difficult for aid workers to locate the people who needed help, but it was known that blue tarps were good indicators of where the displaced persons were. The project aims to find an algorithm that can efficiently and accurately search thousands of geo-referenced images to locate the blue tarps and communicate their locations to rescue workers on the ground in time to provide food and water to those in need.
+
+The project is divided into two parts, where each classification method learned in the course will be tested on the actual imagery data collected during the relief efforts in Haiti. The objective is to determine which method can accurately and timely locate the displaced persons and provide them with necessary aid. In Part I, cross-validation will be used to document the performance of several models, while in Part II, a hold-out testing set will be used. The results from both parts will be combined in the final project, which will include the performance of all the models, overall conclusions, and recommendations for the preferred model for this disaster relief application.
+
+# Loading Necessary R Libraries
+
+```{r}
+# set working directory
+setwd("/Users/matthewscheffel/Desktop/MSDS/DS 6030/Disaster Relief Project/Data")
+getwd()
+```
+
+```{r}
+# load in the necessary packages
+library(tidyverse)
+library(caret)
+library(dplyr)
+library(glmnet)
+library(ggplot2)
+library(GGally)
+library(ROCR)
+library(plotly)
+library(ggcorrplot)
+library(ggpubr)
+library(cowplot)
+library(parallel)
+library(kableExtra)
+library(tidyr)
+library(pROC)
+library(doParallel)
+library(parallel)
+library(e1071)
+library(gridExtra)
+library(grid)
+library(corrplot)
+```
+
+# Data Wrangling and EDA
+
+To begin this project, I will load in the data and begin an Exploratory Data Analysis of the dataset. I will examine the underlying statistics of the data and create a number of data visualizations.
+
+```{r}
+# import data
+data <- read.csv("HaitiPixels.csv", sep=",", header=TRUE)
+
+# head of the data
+head(data)
+
+# structure of the data frame
+str(data)
+
+# summary statistics
+summary(data)
+```
+The data set includes the following variables:
+
+"Class" is a categorical variable with five categories describing the type of land (vegetation, soil, rooftop, non-tarp, and blue-tarp) contained within the images.
+"Red", "Green", and "Blue" are numerical variables representing the intensity of each color in the pixels of the image for each land category.
+
+```{r}
+data$Blue_Tarp <- ifelse(data$Class == "Blue Tarp", "Yes", "No")
+data$Blue_Tarp <- factor(data$Blue_Tarp, levels = c("No", "Yes"))
+```
+
+After loading and examining the data, I created a new variable called "Blue_Tarp" that checks whether the "Class" column has values that are equal to the "Blue Tarp" variable. If they are equal, the Blue_Tarp variable is set to "Yes" (and set to "No" if they are not equal.) I then converted the new variable (Blue_Tarp) to a factor with levels of "No" and "Yes". Adding this binary value makes sense since we are only interested in predicting if a tarp pixel is blue or not (as opposed to differentiating between multiple colors.)
+
+Now, I will create and examine a number of data visualizations.
+
+# Histograms of Pixel Values by Tarp Status
+
+```{r}
+data %>%
+  select(Blue, Green, Red, Blue_Tarp) %>%
+  gather(key = "Color", value = "Value", Blue:Red) %>%
+  ggplot(aes(x = Value, fill = Blue_Tarp)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 50) +
+  scale_fill_manual(values = c("#C0C0C0", "#0000FF"), name = "Blue Tarp") +
+  facet_wrap(~Color, scales = "free_x", nrow = 1) +
+  labs(title = "Histogram of Pixel Values by Color", x = NULL, y = "Count")
+```
+
+# Correlation Visualization of Color Values
+
+```{r}
+# select the color columns
+color_cols <- c("Red", "Green", "Blue")
+
+# correlation matrix
+cor_mat <- cor(data[, color_cols])
+
+# heatmap
+ggcorrplot(cor_mat, 
+           type = "upper", 
+           lab = TRUE, 
+           lab_size = 3, 
+           method = "circle",
+           colors = c("#6D9EC1", "#FFFFFF", "#E46726"),
+           title = "Correlation of Color Values")
+
+```
+
+# Density Plots of Pixel Values
+
+```{r}
+# Vegetation
+vegetation <- data %>%
+  filter(Class == "Vegetation") %>%
+  ggplot(aes(x = Green)) +
+  geom_density(color = 'green') +
+  geom_density(aes(x = Red), color = 'red') +
+  geom_density(aes(x = Blue), color = 'blue') + 
+  labs(x = "Pixel Value", y = "Density", title = "Vegetation") +
+  scale_x_continuous(limits = c(0, 255))
+
+# Soil
+soil <- data %>%
+  filter(Class == "Soil") %>%
+  ggplot(aes(x = Green)) +
+  geom_density(color = 'brown') +
+  geom_density(aes(x = Red), color = 'red') +
+  geom_density(aes(x = Blue), color = 'blue') + 
+  labs(x = "Pixel Value", y = "Density", title = "Soil") +
+  scale_x_continuous(limits = c(0, 255))
+
+# Rooftop
+rooftop <- data %>%
+  filter(Class == "Rooftop") %>%
+  ggplot(aes(x = Green)) +
+  geom_density(color = 'gray') +
+  geom_density(aes(x = Red), color = 'red') +
+  geom_density(aes(x = Blue), color = 'blue') + 
+  labs(x = "Pixel Value", y = "Density", title = "Rooftop") +
+  scale_x_continuous(limits = c(0, 255))
+
+# Blue Tarp
+bluetarp <- data %>%
+  filter(Class == "Blue Tarp") %>%
+  ggplot(aes(x = Green)) +
+  geom_density(color = 'blue') +
+  geom_density(aes(x = Red), color = 'red') +
+  geom_density(aes(x = Blue), color = 'lightblue') + 
+  labs(x = "Pixel Value", y = "Density", title = "Blue Tarp") +
+  scale_x_continuous(limits = c(0, 255))
+
+# Various Non-Tarp
+non_tarp <- data %>%
+  filter(Class == "Various Non-Tarp") %>%
+  ggplot(aes(x = Green)) +
+  geom_density(color = 'orange') +
+  geom_density(aes(x = Red), color = 'red') +
+  geom_density(aes(x = Blue), color = 'blue') + 
+  labs(x = "Pixel Value", y = "Density", title = "Various Non-Tarp") +
+  scale_x_continuous(limits = c(0, 255))
+
+# arrange plots in a grid
+plot_grid(vegetation, soil, rooftop, bluetarp, non_tarp, ncol = 3)
+```
+
+# Matrix of Scatter Plots, Histograms, Correlations, Box Plots for Color Variables
+
+```{r}
+ggpairs(data[2:5],aes(color = Blue_Tarp, alpha = 0.5))
+```
+
+# 3D Scatter Plot of Pixel Values
+
+```{r}
+# 3D scatter plot of the pixel values, with colors and size mapped to variables
+# source: https://plotly.com/r/3d-scatter-plots/
+
+plot <- plot_ly(data, x = ~Red, y = ~Green, z = ~Blue, color = ~Class)
+                #colors = c('blue', 'red', 'brown', 'yellow', 'green'), size = 1)
+
+# add markers
+plot <- plot %>% add_markers()
+plot
+```
+
+The data visualizations from the Exploratory Data Analysis have revealed a number of useful observations. Blue and Red pixels appear to have the lowest level of correlation. Based on a number of the graphs above, the pixels do not appear to be categorized as "Blue" until they reach a value of approximately 100 and above. However, from the data summary, we see that Blue has the lowest minimum, lowest mean, and lowest median values. This suggests that the blue tarps may cause classification/identification issues due to their ability to be easily mistaken for darker images such as water, shade, etc.
+
+Based on the visualizations, there appears to be low correlation between Blue Tarp pixel values and higher Red/Green pixel values. This may be due to Red and Green's closer relationship to each other on the color scale than to Blue, which means it's less likely for a pixel to have both a high Red or Green value and a high Blue value. Ultimately, it's less likely to find a Blue Tarp pixel with high Red or Green values.
+
+Now, I will begin fitting and testing the data on a number of models.
+
+**Model Fitting, Tuning Parameter Selection, and Evaluation**
+
+```{r include = FALSE}
+
+# Training and Testing Data sets
+# could be used if desired, using the train function instead
+
+set.seed(123)
+
+train = sample(1:nrow(data), 0.9 * nrow(data)) # 90%
+data.train = data[train,-1] # predictors
+data.test = data[-train,-1]
+class.train = data[train,1] # pull out response values
+class.test = data[-train,1]
+```
+
+To ensure consistency in the cross-validation process, a seed of 123 was set before I created 10 folds from the data using the createFolds() function. The folds were created specifically for the Blue_Tarp variable and returned as training sets. The trainControl() function was then used to set up the same 10-fold cross-validation procedure for all models, with the folds specified as the index and predictions saved along with class probabilities.
+
+```{r}
+set.seed(123)
+
+# 10 folds for cross-validation
+folds <- createFolds(data$Blue_Tarp, k = 10, list = TRUE, returnTrain = TRUE)
+
+# use trainControl from caret package
+# source: https://www.rdocumentation.org/packages/caret/versions/6.0-92/topics/trainControl
+
+# trainControl object
+control <- trainControl(method = "cv",
+                        number = 10,
+                        index = folds,
+                        savePredictions = TRUE,
+                        classProbs = TRUE)
+```
+
+Next, I created some functions to allow for easier analysis of the models using the same standard tests and statistics that are required in this project.
+
+This function defines the thresholds to test and the statistics of interest, and defines a function "Test_Thresholds" which takes a statistical model as the input and outputs the selected statistics for different thresholds. This also computes the false negative/false positive rates and returns the results.
+
+```{r}
+# source: https://www.rdocumentation.org/packages/caret/versions/6.0-92/topics/thresholder
+
+set.seed(123)
+
+# thresholds for testing
+thresholds <- seq(0.1, 0.9, by = 0.1)
+
+# statistics of interest for the model
+stats_threshold <- c("Accuracy", "Kappa", "Sensitivity", "Specificity", "Precision")
+
+# function to compute statistics for different thresholds
+Test_Thresholds <- function(model) {
+  library(caret)
+  
+  # statistics for different thresholds
+  # thresholder function from caret package
+  results <- thresholder(model, 
+                         threshold = thresholds, 
+                         statistics = stats_threshold)
+  
+  # false negative and false positive rates
+  results$falseNeg <- 1 - results$Sensitivity
+  results$falsePos <- 1 - results$Specificity
+  
+  # Return the results
+  return(results)
+}
+```
+
+The "ROC_Plot" function plots the ROC curve and calculates the AUC for a given (binary) classification model. It takes the model, selected performance metrics, and the model name as input. The function uses the prediction probabilities from the model to create a ROC curve, which is plotted and displayed with the AUC value. The AUC value is added to the model_stats data frame, which is returned at the end of the function.
+
+```{r}
+# source: https://www.rdocumentation.org/packages/pROC/versions/1.18.0/topics/roc
+
+ROC_Plot <- function(model, model_stats, model_name, seed = 123) {
+  set.seed(seed)
+  
+  prob <- model$pred[order(model$pred$rowIndex),]
+  
+  rates <- prediction(prob$Yes,as.numeric(data$Blue_Tarp))
+  roc <- performance(rates, measure = "tpr", x.measure = "fpr")
+  plot(roc, main = paste("ROC Curve:", model_name))
+  lines(x = c(0,1), y = c(0,1), col = "red")
+  
+  auc <- performance(rates, "auc")
+  model_stats$AUROC <- auc@y.values[[1]]
+  return(model_stats)
+}
+```
+
+Now, I will run each model on the data set as well as use the aforementioned functions to determine the appropriate thresholds and ROC/AUC values. The models will follow this basic formula:
+
+$$BlueTarp = RedX_1 + GreenX_2 + BlueX_3$$
+
+# Logistic Regression
+
+This model uses the train() function of the caret package to create logistic regression models with binomial family and GLM method. The model is cross-validated using trainControl() to calculate accuracy and kappa statistics.
+
+```{r}
+set.seed(123)
+
+GLM_Reg<-train(Blue_Tarp~Red+Green+Blue,
+      data = data,
+      family = "binomial",
+      method = "glm",
+      trControl = control)
+
+GLM_Reg
+```
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+GLM_Reg_T <- Test_Thresholds(GLM_Reg)
+GLM_Reg_T[2:9] %>% slice_max(Accuracy)
+```
+
+From the threshold test, we can see that at a probability threshold of 0.7, the accuracy was 0.996, kappa was 0.928, sensitivity was 0.998, specificity was 0.910, and precision was 0.997. In this case, approximately 9% of the non-blue tarp values were classified as a blue tarp by the model. On the other hand, only approximately 0.16% of the blue tarp values were classified as non-blue tarp by this model. This tells us that the model has a high sensitivity but a relatively lower specificity, which means that it is adept at identifying blue tarps but may also mis-classify some non-blue tarps as blue. Overall, these stats suggest that the model performs well at this threshold value.
+
+```{r}
+GLM_Final <- GLM_Reg_T[2:9] %>% slice_max(Accuracy)
+GLM_Final <- ROC_Plot(GLM_Reg, GLM_Final, "Logistic Regression")
+```
+
+The Logistic Regression model has an AUROC value of 0.9985.
+
+# Linear Discriminant Analysis
+
+This model uses the train() function of the caret package to create an LDA method model. The model is cross-validated using trainControl() to calculate accuracy and kappa statistics.
+
+```{r}
+set.seed(123)
+
+LDA_Data <- train(Blue_Tarp ~ Red + Green + Blue, data = data,
+                  method = "lda",
+                  trControl = control)
+
+LDA_Data
+```
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+LDA_Data_T <- Test_Thresholds(LDA_Data)
+LDA_Data_T[2:9] %>% slice_max(Accuracy)
+```
+
+From the threshold test, we can see that at a  probability threshold of 0.1, the model has an accuracy of 0.985 and a sensitivity of 0.993, which means that the model correctly identified most of the positive cases. However, the specificity is relatively low at 0.741, indicating that the model has a higher false positive rate, meaning it incorrectly identified some negative cases as positive. This trade-off between sensitivity and specificity can be adjusted by changing the probability threshold value.
+
+Since the threshold may need to be adjusted, I will test for a superior value.
+
+```{r}
+# maximize accuracy
+accuracy <- "Accuracy"
+
+# threshold that maximizes accuracy
+optimal_threshold <- LDA_Data_T %>% 
+  filter_at(vars(contains(accuracy)), all_vars(!is.na(.))) %>%  # missing values
+  slice(which.max(get(accuracy))) %>%  # get the row with the highest performance metric value
+  pull(prob_threshold)  # optimal threshold
+
+# print optimal threshold
+cat("Optimal threshold value based on Accuracy:", optimal_threshold, "\n")
+
+```
+
+```{r}
+# maximize precision
+precision <- "Precision"
+
+# threshold that maximizes precision
+optimal_threshold <- LDA_Data_T %>% 
+  filter_at(vars(contains(precision)), all_vars(!is.na(.))) %>%  # missing values
+  slice(which.max(get(precision))) %>%  # get the row with the highest performance metric value
+  pull(prob_threshold)  # optimal threshold
+
+# print optimal threshold
+cat("Optimal threshold value based on Precision:", optimal_threshold, "\n")
+```
+
+```{r}
+# maximize specificity
+specificity <- "Specificity"
+
+# threshold that maximizes specificity
+optimal_threshold <- LDA_Data_T %>% 
+  filter_at(vars(contains(specificity)), all_vars(!is.na(.))) %>%  # missing values
+  slice(which.max(get(specificity))) %>%  # get the row with the highest performance metric value
+  pull(prob_threshold)  # optimal threshold
+
+# print optimal threshold
+cat("Optimal threshold value based on Specificity:", optimal_threshold, "\n")
+```
+
+Running a few tests seems to indicate that a higher threshold would be better. I will adjust my model to use a threshold value of 0.9.
+
+```{r}
+LDA_Data_T$prob_threshold <- 0.9
+```
+
+
+```{r}
+LDA_Final <- LDA_Data_T[2:9] %>% slice_max(Accuracy)
+LDA_Final <- ROC_Plot(LDA_Data, LDA_Final, "LDA")
+```
+
+The AUROC value for the LDA model is 0.9889.
+
+# Quadratic Discriminant Analyis
+
+This model uses the train() function of the caret package to create a QDA method model. The model is cross-validated using trainControl() to calculate accuracy and kappa statistics.
+
+```{r}
+set.seed(123)
+
+QDA_Data <- train(Blue_Tarp~Red+Green+Blue, data=data,
+                  method="qda",
+                  trControl=control)
+
+QDA_Data
+```
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+QDA_Data_T <- Test_Thresholds(QDA_Data)
+QDA_Data_T[2:9] %>% slice_max(Accuracy)
+```
+
+From the threshold test, we can infer that at a probability threshold of 0.7, the model has a strong overall accuracy of 0.9947 and a high sensitivity value of 0.9993, indicating that it is effective at identifying true positives. However, it also has a relatively high false positive rate of over 14%.
+
+```{r}
+QDA_Final <- QDA_Data_T[2:9] %>% slice_max(Accuracy)
+QDA_Final <- ROC_Plot(QDA_Data, QDA_Final, "QDA")
+```
+
+The QDA model has an AUROC value of 0.9982.
+
+# K-Nearest Neighbor
+
+This model uses the train() function of the caret package to create a KNN method model. The model is cross-validated using trainControl() to calculate accuracy and kappa statistics.
+
+First, I attempted to create a plot to help determine the accuracy of each K-value:
+
+```{r}
+# grid of tuning parameters for k in KNN model
+#knn_grid <- data.frame(k = seq(5, 50, 10))
+
+# train KNN model
+#KNN_Data <- train(Blue_Tarp ~ Red + Green + Blue, data = data,
+                  #method = "knn",
+                  #tuneGrid = knn_grid,
+                  #metric = "Accuracy",
+                  #trControl = control)
+
+# results
+#plot(KNN_Data)
+```
+
+However, my R was crashing if I tried to test a value above 20.
+
+Thus, after testing and experimenting with multiple k-values, I determined to use k = 20 as a good value for this model.
+
+```{r}
+set.seed(123)
+
+# source: https://rpubs.com/Mentors_Ubiqum/tunegrid_tunelength
+
+KNN_Data <- train(Blue_Tarp~Red+Green+Blue, data=data,
+                  tuneGrid = data.frame(k=seq(20,20,1)),
+                  method = "knn",
+                  metric = "Accuracy",
+                  trControl = control)
+
+KNN_Data$results %>% slice_max(Accuracy)
+```
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+KNN_Data_T <- Test_Thresholds(KNN_Data)
+KNN_Data_T %>% slice_max(Accuracy)
+```
+
+This model used a probability threshold of 0.4 and achieved a high accuracy of 0.997 as well as a high precision level of 0.998. The model correctly identified almost all true positives but had a relatively lower specificity of 0.942. Both the false positive and false negative rates were very low.
+
+```{r}
+KNN_Final <- KNN_Data_T[1:9] %>% slice_max(Accuracy)
+KNN_Final <- ROC_Plot(KNN_Data, KNN_Final, "KNN")
+```
+
+The AUROC value for the KNN model was 0.9995.
+
+# Penalized Logistic Regression (Elastic Net Penalty)
+
+The model performs Penalized Logistic Regression in the form of a ridge regression using the "glmnet" function from the caret package. It creates a grid of tuning parameters using "expand.grid", trains the model with "train", and then outputs the results. Ridge regression is a form of PLR that includes a penalty term in the objective function to reduce the complexity of the model and its overfitting. The tuneGrid uses a sequence of lambda values in this model.
+
+```{r}
+# source: https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/expand.grid
+
+lambdas <- expand.grid(alpha = 0, lambda = seq(0,1, 0.1))
+
+Ridge_Data <- train(Blue_Tarp~Red+Green+Blue, data = data,
+                  method = "glmnet",
+                  tuneGrid = lambdas,
+                  trControl = control)
+
+Ridge_Data$results %>% slice_max(Accuracy)
+```
+Now, the model is updated to perform elastic net regularization once again using the "glmnet" function from the caret package. This model uses a weighted combination of L1 and L2 penalties by setting alpha to 0.8, and sets lambda to 0 to use the minimum amount of regularization.
+
+```{r}
+Elastic_Data <- train(Blue_Tarp~Red+Green+Blue, data = data,
+                      method = "glmnet",
+                      tuneGrid = expand.grid(alpha = 0.8, lambda = 0),
+                      trControl = control)
+       
+Elastic_Data$results %>% slice_max(Accuracy)
+```
+
+From the 2 outputs, we can infer that the Elastic Data model with alpha = 0.8 and lambda = 0 produces the best results.
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+Elastic_Data_T <- Test_Thresholds(Elastic_Data)
+Elastic_Data_T %>% slice_max(Accuracy)
+```
+
+The model produces high accuracy (99%) and fairly low false negative and false positive rates.
+
+```{r}
+PLR_Final <- Elastic_Data_T %>% slice_max(Accuracy)
+PLR_Final <- ROC_Plot(Elastic_Data, PLR_Final, "Penalized Logistic Regression")
+```
+
+The AUROC value for the PLR model is 0.9985.
+
+# Optimal Number of Cores
+
+Before I run the Random Forest (and SVM) models, I want to determine the optimal number of cores. This code tests the optimal number of CPU cores to use for training support vector machine (SVM) models on the dataset using the svm function from the e1071 package. The code creates a parallel back end using the makeCluster function, splits the dataset into training and test sets, and trains SVM models with different numbers of cores using a for loop. The elapsed time for each number of cores is then printed. Finding the optimal number of cores can improve performance and reduce computation time.
+
+```{r}
+# testing for optimal number of cores to use
+
+# parallel back end
+cl <- makeCluster(detectCores())
+
+# training and test sets
+set.seed(123)
+train_indices <- sample(nrow(data), nrow(data) * 0.8)
+train_data <- data[train_indices, ]
+test_data <- data[-train_indices, ]
+
+# training SVM models with different # of cores
+num_cores <- seq(1, detectCores())
+models <- list()
+for (i in num_cores) {
+  start_time <- Sys.time()
+  svm_model <- svm(Blue_Tarp ~ ., data = train_data, type = "C-classification", kernel = "radial", scale = TRUE, cross = 5, verbose = FALSE, parallel = cl, ncores = i)
+  end_time <- Sys.time()
+  models[[i]] <- list(svm_model = svm_model, elapsed_time = end_time - start_time)
+}
+
+# elapsed times for each # of cores
+for (i in num_cores) {
+  cat(sprintf("Elapsed time using %d cores: %f seconds\n", i, models[[i]]$elapsed_time))
+}
+```
+
+After running the code several times, the results for each number of cores were fairly consistent. Due to limited available memory on my computer and no demonstrable benefit from using a higher amount of cores, I chose a smaller number of cores: 2.
+
+# Random Forest
+
+The model trains a random forest model on the dataset using parallel processing with two cores and performs hyperparameter tuning over the mtry parameter using the train function. The code creates a parallel back-end using the makePSOCKcluster function and registers it using the registerDoParallel function. The tuneGrid parameter is set to a grid of hyperparameters with mtry values of 1 and 2. The best model will be selected based on accuracy.
+
+```{r}
+set.seed(123)
+
+# https://www.geeksforgeeks.org/random-forest-with-parallel-computing-in-r-programming/#
+
+RF_Cluster <- makePSOCKcluster(2)
+registerDoParallel(RF_Cluster)
+
+mtryGrid <- data.frame(mtry = c(1,2))
+
+RF_Data <- train(Blue_Tarp ~ Red + Green + Blue, data = data,
+                  tuneGrid = mtryGrid,   
+                  method = "rf",
+                  metric = "Accuracy",
+                  trControl = control)
+
+stopCluster(RF_Cluster)
+
+RF_Data$results %>% slice_max(Accuracy)
+```
+
+The best value for the mtry parameter during hyperparameter tuning was 1, according to the accuracy metric.
+
+The threshold test is used to compare the performance of the model across multiple threshold values.
+
+```{r}
+RF_Data_T <- Test_Thresholds(RF_Data)
+RF_Data_T %>% slice_max(Accuracy)
+```
+
+I wanted to determine the accuracy and false negative rate of the model at different probability thresholds, and created two plots to visualize the results: one for accuracy and one for false negative rate. The accuracy plot shows the accuracy of the model at different probability thresholds, while the false negative rate plot shows the rate at which the model incorrectly predicts a material will pass the quality control test when it actually fails. Choosing the optimal probability threshold for the model depends on the desired balance between accuracy and false negative rate.
+
+```{r}
+# plot accuracy and false negative rate vs probability threshold
+
+# accuracy
+RF_Plot_Acc <- ggplot(data = RF_Data_T, aes(x = prob_threshold, y = Accuracy)) +
+  geom_line(lwd = 1, color = "blue") +
+  labs(x = "Probability Threshold", y = "Accuracy", title = "Random Forest Accuracy")
+
+# false negative rate
+RF_Plot_FNR <- ggplot(data = RF_Data_T, aes(x = prob_threshold, y = falseNeg)) +
+  geom_line(lwd = 1, color = "red") +
+  labs(x = "Probability Threshold", y = "False Negative Rate", title = "RF False Negative Rate")
+
+# plots
+grid.arrange(RF_Plot_Acc, RF_Plot_FNR, nrow = 1)
+```
+
+At a threshold of 0.6, the accuracy is at its peak and still maintains a relatively low false negative rate.
+
+Rerunning the model with a cluster of 2 cores and mtry = 1:
+
+```{r}
+set.seed(123)
+
+RF_Cluster_2 <- makePSOCKcluster(2)
+registerDoParallel(RF_Cluster_2)
+
+RF_Data_2 <- train(Blue_Tarp ~ Red + Green + Blue, data = data,
+                  tuneGrid = data.frame(mtry = 1),   
+                  method = "rf",
+                  metric = "Accuracy",
+                  trControl = control)
+
+stopCluster(RF_Cluster_2)
+
+RF_Data_2$results %>% slice_max(Accuracy)
+```
+
+The updated model returns accuracy of 0.9970589.
+
+```{r}
+RF_Final <- RF_Data_T %>% slice_max(Accuracy)
+RF_Final <- ROC_Plot(RF_Data_2, RF_Final, "Random Forest")
+```
+
+The AUROC value for the random Forest model was 0.9997.
+
+# Support Vector Machines
+
+The SVM model trains three support vector machine (SVM) models with different kernel functions on the same dataset and evaluates them using the same metric (accuracy) and control parameters. The three SVM models use different kernel functions: linear, polynomial, and radial. Parallel processing is used to speed up the computation and uses two cores.
+
+
+```{r}
+set.seed(123)
+
+# using 2 cores
+
+SVM_Cluster <- makePSOCKcluster(2)
+registerDoParallel(SVM_Cluster)
+
+# https://rpubs.com/cliex159/865583
+
+SVM_Linear <- train(Blue_Tarp ~ Red + Green + Blue, data = data,  
+                         method="svmLinear",
+                         metric="Accuracy",
+                         trControl = control)
+
+SVM_Polynomial <- train(Blue_Tarp ~ Red + Green + Blue, data = data,  
+                       method = "svmPoly",
+                       metric = "Accuracy",
+                       trControl = control)
+
+SVM_Radial <- train(Blue_Tarp ~ Red + Green + Blue, data = data,  
+                         method = "svmRadial",
+                         metric = "Accuracy",
+                         trControl = control)
+
+stopCluster(SVM_Cluster)
+```
+
+Results:
+
+```{r}
+SVM_Linear$results %>% slice_max(Accuracy)
+```
+
+Linear model produced an accuracy of 0.9953827.
+
+```{r}
+SVM_Polynomial$results %>% slice_max(Accuracy)
+```
+
+Polynomial model produced an accuracy of 0.9960152.
+
+```{r}
+SVM_Radial$results %>% slice_max(Accuracy)
+```
+
+Radial model produced an accuracy of 0.9969798.
+
+The different outputs demonstrate that the Radial SVM kernel function was the most effective. The tuning parameters were sigma = 8.496202 and C = 1 for this model.
+
+Next I rerun the model to determine the optimal values for C and Sigma by using expanded values for each.
+
+```{r}
+set.seed(123)
+
+SVM_Cluster_2 <- makePSOCKcluster(2)
+registerDoParallel(SVM_Cluster_2)
+
+SVM_Radial_Grid <- expand.grid(C=c(0.75, 1, 1.5, 2), sigma=c(7.5, 8, 8.18, 9, 9.5))
+
+SVM_Radial_2 <- train(Blue_Tarp ~ Red + Green + Blue, data = data,  
+                         method = "svmRadial",
+                         metric = "Accuracy",
+                         trControl = control,
+                         tuneGrid = SVM_Radial_Grid)
+
+stopCluster(SVM_Cluster_2)
+```
+
+```{r}
+SVM_Radial_2$results %>% slice_max(Accuracy)
+```
+
+The model with c = 1.5 and Sigma = 9 appears to be slightly superior.
+
+```{r}
+SVM_Radial_T <- Test_Thresholds(SVM_Radial)
+SVM_Radial_T[1:9] %>% slice_max(Accuracy)
+```
+
+The original model with autotuning provided an accuracy of 0.9971379.
+
+```{r}
+SVM_Radial_T_2 <- Test_Thresholds(SVM_Radial_2)
+SVM_Radial_T_2[1:9] %>% slice_max(Accuracy)
+```
+The 2nd model with a wider variety of tuning options provided slightly higher accuracy of 0.9971537. I determined sigma = 9, C = 1.5 were the optimal values.
+
+Running the final SVM model with Sigma = 9, C = 1.5:
+
+```{r}
+SVM_Cluster_Final <- makePSOCKcluster(2)
+registerDoParallel(SVM_Cluster_Final)
+
+SVM_Radial_Final <- train(Blue_Tarp ~ Red + Green + Blue, data = data,  
+                         method = "svmRadial",
+                         metric = "Accuracy",
+                         trControl = control,
+                         tuneGrid = data.frame(sigma = 9, C = 1.5))
+
+stopCluster(SVM_Cluster_Final)
+```
+
+```{r}
+SVM_Radial_Final$results %>% slice_max(Accuracy)
+```
+The final SVM model provides an accuracy of 0.9970114.
+
+```{r}
+SVM_Radial_T_Final <- Test_Thresholds(SVM_Radial_Final)
+
+SVM_Final <- SVM_Radial_T_Final %>% slice_max(Accuracy)
+SVM_Final <- ROC_Plot(SVM_Radial_Final, SVM_Final, "Random Forest")
+```
+
+The AUROC value for this model was 0.9948.
+
+# Cross Validation
+
+```{r echo = FALSE, results = 'asis'}
+
+# additional source: https://rmarkdown.rstudio.com/lesson-7.html
+
+# add model name to stats
+GLM_Final <- GLM_Final %>% mutate(Model="LR")
+LDA_Final <- LDA_Final %>% mutate(Model="LDA")
+QDA_Final <- QDA_Final %>% mutate(Model="QDA")
+KNN_Final <- KNN_Final %>% mutate(Model="KNN")
+PLR_Final <- PLR_Final %>% mutate(Model="PLR")
+RF_Final <- RF_Final %>% mutate(Model="RF")
+SVM_Final <- SVM_Final %>% mutate(Model="SVM")
+
+# merge the stats together, create tuning column from k and alpha
+table_data <- Reduce(function(x, y) merge(x, y, all=TRUE),
+                         list(GLM_Final,
+                              LDA_Final,
+                              QDA_Final,
+                              KNN_Final,
+                              PLR_Final,
+                              RF_Final,
+                              SVM_Final)) %>% mutate(Tuning = coalesce(k,alpha))
+
+# format the table and set model as the index
+Table_Stats <- table_data %>%
+  dplyr::select("Model", "Tuning", "AUROC",
+                "prob_threshold", "Accuracy",
+                "Sensitivity", "falsePos", "Precision") %>%
+  rename(Threshold = prob_threshold, TPR = Sensitivity, FPR = falsePos) %>%
+  column_to_rownames(var = 'Model') %>%
+  round(4)
+
+# create column for lambda values in PLR
+Table_Stats$Tuning[Table_Stats$Tuning == 0] <- "*"
+
+# create table with kableExtra
+kable(Table_Stats, format = "html", caption = "Cross Validation Results") %>%
+  kable_styling(full_width = F, position = "center", 
+                bootstrap_options = c("striped", "hover", "condensed")) %>%
+  column_spec(1, bold = T, border_right = T)
+```
+
+# Initial Results
+
+After performing cross validation, we see that each of the models performed exceptionally well. SVM achieved the highest accuracy among all the models tested, with a value of 0.9971. It also had a very low FPR of 0.0371, indicating that it is very good at correctly identifying negative samples. Additionally, SVM had a high TPR of 0.9983, which suggests that it is good at identifying positive samples. Random Forest (RF) also performed very well, with an accuracy of 0.9970 and a low FPR of 0.0415. However, its TPR was slightly lower than SVM's, at 0.9983.
+
+Quadratic discriminant analysis (QDA) had a relatively low accuracy of 0.9947, but a high TPR of 0.9993. However, its FPR was also high at 0.1444, suggesting that it may not be a good choice for applications where it is important to avoid false positives. Penalized logistic regression (PLR) had an accuracy of 0.9956 and a relatively low FPR of 0.0955, indicating that it is good at correctly identifying negative samples. However, its TPR was slightly lower than SVM's and RF's, at 0.9986. Logistic regression (LR) had a similar performance to PLR, with an accuracy of 0.9956 and a TPR of 0.9984. However, its FPR was slightly higher than PLR's, at 0.0895.
+
+Linear discriminant analysis (LDA) had the lowest performance among all the models tested, with an accuracy of 0.9846, a low TPR of 0.9926, and a high FPR of 0.2587.
+
+Overall, the results suggest that SVM and RF are the strongest models for the classification of the Blue Tarps, while QDA may be a poor choice due to its high false positive rate.
+
+These results will be reiterated in the conclusion.
+
+# Hold Out Data
+
+For the next part of the analysis, the models will be trained against the new Hold Out data set. The data required some more extensive cleaning than the previous data set.
+
+```{r}
+# set wd for the data files
+
+setwd("/Users/matthewscheffel/Desktop/MSDS/DS 6030/Disaster Relief Project/Data")
+
+# load Hold Out Data
+
+Data_057_NonTarp <- read.csv("orthovnir057_ROI_NON_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+Data_067_Tarp <- read.csv("orthovnir067_ROI_Blue_Tarps_data.txt", 
+                            header = FALSE, skip = 1, sep = "")
+Data_067_Tarp2 <- read.csv("orthovnir067_ROI_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+Data_067_NonTarp <- read.csv("orthovnir067_ROI_NOT_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+Data_069_Tarp <- read.csv("orthovnir069_ROI_Blue_Tarps.txt", 
+                         header = FALSE, skip = 8, sep = "")
+Data_069_NonTarp <- read.csv("orthovnir069_ROI_NOT_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+Data_078_Tarp <- read.csv("orthovnir078_ROI_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+Data_078_NonTarp <- read.csv("orthovnir078_ROI_NON_Blue_Tarps.txt", 
+                            header = FALSE, skip = 8, sep = "")
+```
+
+Recreating the Blue_Tarp variable for the new data set:
+
+```{r}
+# binary variable for blue tarp or not
+Data <- data %>%
+  mutate(Blue_Tarp = ifelse(data$Class == "Blue Tarp", "Yes", "No"))
+
+# converting Blue_Tarp to a factor
+Data$Blue_Tarp <- as.factor(Data$Blue_Tarp)
+
+# dropping class feature
+Train <- Data[,c(2:5)]
+```
+
+
+```{r}
+# dropping columns that aren't needed for analysis
+
+Data_057_NonTarp <- Data_057_NonTarp[,c(8:10)]
+Data_067_Tarp2 <- Data_067_Tarp2[,c(8:10)]
+Data_067_NonTarp <- Data_067_NonTarp[,c(8:10)]
+Data_069_Tarp <- Data_069_Tarp[,c(8:10)]
+Data_069_NonTarp <- Data_069_NonTarp[,c(8:10)]
+Data_078_Tarp <- Data_078_Tarp[,c(8:10)]
+Data_078_NonTarp <- Data_078_NonTarp[,c(8:10)]
+
+# renaming columns
+colnames = c("Red" = "V8", "Green" = "V9", "Blue" = "V10")
+
+Data_057_NonTarp <- Data_057_NonTarp %>%
+  rename(colnames)
+Data_067_Tarp <- Data_067_Tarp %>%
+  rename(c("Red" = "V1", "Green" = "V2", "Blue" = "V3"))
+Data_067_Tarp2 <- Data_067_Tarp2 %>%
+  rename(colnames)
+Data_067_NonTarp <- Data_067_NonTarp %>%
+  rename(colnames)
+Data_069_Tarp <- Data_069_Tarp %>%
+  rename(colnames)
+Data_069_NonTarp <- Data_069_NonTarp %>%
+  rename(colnames)
+Data_078_Tarp <- Data_078_Tarp %>%
+  rename(colnames)
+Data_078_NonTarp <- Data_078_NonTarp %>%
+  rename(colnames)
+
+#  factor column determining tarp or not
+
+Data_057_NonTarp <- Data_057_NonTarp %>%
+  mutate(Blue_Tarp = "No")
+Data_057_NonTarp$Blue_Tarp <- as.factor(Data_057_NonTarp$Blue_Tarp)
+
+Data_067_Tarp <- Data_067_Tarp %>%
+  mutate(Blue_Tarp = "Yes")
+Data_067_Tarp$Blue_Tarp <- as.factor(Data_067_Tarp$Blue_Tarp)
+
+Data_067_Tarp2 <- Data_067_Tarp2 %>%
+  mutate(Blue_Tarp = "Yes")
+Data_067_Tarp2$Blue_Tarp <- as.factor(Data_067_Tarp2$Blue_Tarp)
+
+Data_067_NonTarp <- Data_067_NonTarp %>%
+  mutate(Blue_Tarp = "No")
+Data_067_NonTarp$Blue_Tarp <- as.factor(Data_067_NonTarp$Blue_Tarp)
+
+Data_069_Tarp <- Data_069_Tarp %>%
+  mutate(Blue_Tarp = "Yes")
+Data_069_Tarp$Blue_Tarp <- as.factor(Data_069_Tarp$Blue_Tarp)
+
+Data_069_NonTarp <- Data_069_NonTarp %>%
+  mutate(Blue_Tarp = "No")
+Data_069_NonTarp$Blue_Tarp <- as.factor(Data_069_NonTarp$Blue_Tarp)
+
+Data_078_Tarp <- Data_078_Tarp %>%
+  mutate(Blue_Tarp = "Yes")
+Data_078_Tarp$Blue_Tarp <- as.factor(Data_078_Tarp$Blue_Tarp)
+
+Data_078_NonTarp <- Data_078_NonTarp %>%
+  mutate(Blue_Tarp = "No")
+Data_078_NonTarp$Blue_Tarp <- as.factor(Data_078_NonTarp$Blue_Tarp)
+```
+
+Combining the data into one data set, Holdout:
+
+```{r}
+Holdout <- bind_rows(Data_057_NonTarp, Data_067_Tarp, Data_067_Tarp2, 
+                     Data_067_NonTarp, Data_069_Tarp, Data_069_NonTarp, 
+                     Data_078_Tarp, Data_078_NonTarp)
+Holdout$Blue_Tarp <- relevel(Holdout$Blue_Tarp, "No")
+```
+
+Head of the data set:
+
+```{r}
+head(Holdout)
+```
+
+Data for tarps from the Holdout set:
+
+```{r}
+All_Tarps <- subset(Holdout, Blue_Tarp == "Yes")
+```
+
+Data for original tarps:
+
+```{r}
+data_Tarps <- subset(data, Blue_Tarp=="Yes")
+```
+
+Data for non-tarps from the Holdout set:
+
+```{r}
+No_Tarps <- subset(Holdout, Blue_Tarp=="No")
+```
+
+# Data Visualization
+
+I created a matrix of scatterplots for pairwise relationships between the continuous variables in the data set that serves as a combination of the subsets All_Tarps and No_Tarps. The function creates a matrix of scatterplots with each variable plotted against every other variable, excluding the Blue_Tarp variable. The upper argument is used to specify that only the upper half of the matrix is displayed, with correlation coefficients displayed instead of duplicate plots.
+
+```{r}
+New_EDA <- rbind(All_Tarps, No_Tarps)
+
+New_EDA %>%
+  dplyr::select(-Blue_Tarp) %>%
+  ggpairs(upper = list(continuous = wrap("cor", size = 3)),
+          mapping=ggplot2::aes(color = New_EDA$Blue_Tarp, alpha=0.5))
+```
+
+The data here looks fairly comparable to the original dataset
+
+I played around with some other visualizations, but none of them proved to be particularly insightful.
+
+```{r}
+# Boxplots
+
+bp_red <- ggplot(New_EDA, aes(x = Blue_Tarp, y = Red)) +
+  geom_boxplot() +
+  labs(x = "Blue Tarp", y = "Red")
+
+bp_green <- ggplot(New_EDA, aes(x = Blue_Tarp, y = Green)) +
+  geom_boxplot() +
+  labs(x = "Blue Tarp", y = "Green")
+
+bp_blue <- ggplot(New_EDA, aes(x = Blue_Tarp, y = Blue)) +
+  geom_boxplot() +
+  labs(x = "Blue Tarp", y = "Blue")
+
+# Histograms
+
+hist_red <- ggplot(New_EDA, aes(x = Red, fill = Blue_Tarp)) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30) +
+  labs(x = "Red", y = "Frequency")
+
+hist_green <- ggplot(New_EDA, aes(x = Green, fill = Blue_Tarp)) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30) +
+  labs(x = "Green", y = "Frequency")
+
+hist_blue <- ggplot(New_EDA, aes(x = Blue, fill = Blue_Tarp)) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30) +
+  labs(x = "Blue", y = "Frequency")
+
+# Density Plots
+
+den_red <- ggplot(New_EDA, aes(x = Red, fill = Blue_Tarp)) +
+  geom_density(alpha = 0.5) +
+  labs(x = "Red", y = "Density")
+
+den_green <- ggplot(New_EDA, aes(x = Green, fill = Blue_Tarp)) +
+  geom_density(alpha = 0.5) +
+  labs(x = "Green", y = "Density")
+
+den_blue <- ggplot(New_EDA, aes(x = Blue, fill = Blue_Tarp)) +
+  geom_density(alpha = 0.5) +
+  labs(x = "Blue", y = "Density")
+
+# Scatter Plots with linear regression lines
+scatter_red <- ggplot(New_EDA, aes(x = Red, y = Blue_Tarp)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = lm, se = FALSE) +
+  labs(x = "Red", y = "Blue Tarp")
+
+scatter_green <- ggplot(New_EDA, aes(x = Green, y = Blue_Tarp)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = lm, se = FALSE) +
+  labs(x = "Green", y = "Blue Tarp")
+
+scatter_blue <- ggplot(New_EDA, aes(x = Blue, y = Blue_Tarp)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = lm, se = FALSE) +
+  labs(x = "Blue", y = "Blue Tarp")
+
+# Heatmap
+corr_matrix <- cor(New_EDA[, c("Red", "Green", "Blue")])
+heatmap <- corrplot(corr_matrix, method = "color", type = "upper", tl.col = "black", tl.srt = 45)
+
+# Combine plots into a grid
+grid.arrange(bp_red, bp_green, bp_blue, nrow = 1)
+grid.arrange(hist_red, hist_green, hist_blue, nrow = 1)
+grid.arrange(den_red, den_green, den_blue, nrow = 1)
+grid.arrange(scatter_red, scatter_red, scatter_blue, nrow = 1)
+#grid.arrange(heatmap, ncol = 1)
+
+```
+
+# Testing Hold Out Data
+
+To test against the Holdout data, I used a function that takes in the model and the previous statistics and returns updated statistics based on the new predictions made by the model. The function first sets up a parallel processing cluster with two nodes, then uses the predict() function to generate predicted probabilities for the holdout data based on the given model. These probabilities are then used to predict whether each holdout observation is a Blue Tarp or not (using a threshold specified in the previous statistics input). The function then calculates the area under the ROC curve (AUROC) for the model's predictions using the prediction() and performance() functions. Finally, the function generates a confusion matrix for the model's predictions and uses this to calculate our various statistical values of interest including accuracy, true positive rate (TPR), false positive rate (FPR), and precision.
+
+```{r}
+# https://www.rdocumentation.org/packages/FRESA.CAD/versions/3.4.2/topics/predictionStats
+
+New_Stats <- function(model, Previous_Stats) {
+  
+  cluster <- makePSOCKcluster(2) 
+  registerDoParallel(cluster)
+  
+  set.seed(123)
+  
+  prob <- predict(model, newdata = Holdout, type = "prob")
+  pred <- as.factor(ifelse(prob$Yes>Previous_Stats$prob_threshold, "Yes", "No"))
+  rate <- prediction(prob[,2], Holdout$Blue_Tarp)
+  auc <- performance(rate, "auc")
+  
+  stopCluster(cluster)
+  
+  conf <- confusionMatrix(pred, Holdout$Blue_Tarp)
+  
+  Tuning <- NaN
+  Sigma_Lambda <- NaN
+  
+  cols <- colnames(Previous_Stats)
+  
+  # Tuning
+  
+  for (col in c("alpha","k","mtry","C")) {
+    if(col %in% cols){
+      Tuning <- Previous_Stats[[col]]
+    }
+  }
+  
+  # Sigma_Lambda
+  for (col in c("lambda","sigma")) {
+    if(col %in% cols){
+      Sigma_Lambda <- Previous_Stats[[col]]
+    }
+  }
+  
+  stats <- data.frame(Tuning = Tuning,
+                      Sigma_Lambda = Sigma_Lambda,
+                      AUROC = auc@y.values[[1]],
+                      Threshold = Previous_Stats$prob_threshold,
+                      Accuracy = conf$overall[["Accuracy"]],
+                      TPR = conf$byClass[["Sensitivity"]],
+                      FPR = 1-conf$byClass[["Specificity"]],
+                      Precision = conf$byClass[["Precision"]])
+  return(stats)
+}
+```
+
+Running the new predictions:
+
+```{r}
+GLM <- New_Stats(GLM_Reg, GLM_Final)
+LDA <- New_Stats(LDA_Data, LDA_Final)
+QDA <- New_Stats(QDA_Data, QDA_Final)
+KNN <- New_Stats(KNN_Data, KNN_Final)
+PLR <- New_Stats(Elastic_Data, PLR_Final)
+RF <- New_Stats(RF_Data_2, RF_Final)
+SVM <- New_Stats(SVM_Radial_Final, SVM_Final)
+```
+
+# Hold Out Results
+
+```{r}
+GLM <- GLM %>% mutate(Model="Log Reg")
+LDA <- LDA %>% mutate(Model="LDA")
+QDA <- QDA %>% mutate(Model="QDA")
+KNN <- KNN %>% mutate(Model="KNN")
+PLR <- PLR %>% mutate(Model="PLR")
+RF <- RF %>% mutate(Model="RF")
+SVM <- SVM %>% mutate(Model="SVM")
+
+table_data_final <- Reduce(function(x, y) merge(x, y, all=TRUE),
+                     list(GLM,
+                          LDA,
+                          QDA,
+                          KNN,
+                          PLR,
+                          RF,
+                          SVM))
+
+# format the table and set model as the index
+Table_Stats_Final <- table_data_final %>%
+  dplyr::select("Model", "Tuning", "Sigma_Lambda", 
+                "AUROC", "Threshold", 
+                "Accuracy", "TPR", "FPR", 
+                "Precision") %>%
+  #rename(Threshold = prob_threshold, TPR = Sensitivity, FPR = falsePos, SigmaLambda = Sigma_Lambda) %>%
+  column_to_rownames(var = 'Model') %>%
+  round(4)
+
+# create column for lambda values in PLR
+Table_Stats_Final$Tuning[Table_Stats_Final$Tuning == 0] <- "*"
+
+# create table with kableExtra
+kable(Table_Stats_Final, format = "html", caption = "Hold Out Results") %>%
+  kable_styling(full_width = F, position = "center", 
+                bootstrap_options = c("striped", "hover", "condensed")) %>%
+  column_spec(1, bold = T, border_right = T)
+```
+
+# Conclusions
+
+# 1. Best Performing Algorithms in the Cross-Validation and Hold-Out Data
+
+Cross-Validation:
+
+```{r}
+# Cross Validation Results
+cat("Model\tTuning\tAUROC\tThreshold\tAccuracy\tTPR\tFPR\tPrecision\n")
+cat(paste("KNN\t20\t0.9995\t0.4\t0.9969\t0.9988\t0.0579\t0.9981\n"))
+cat(paste("RF\tNA\t0.9997\t0.6\t0.9970\t0.9983\t0.0415\t0.9986\n"))
+cat(paste("QDA\tNA\t0.9982\t0.7\t0.9947\t0.9993\t0.1444\t0.9953\n"))
+cat(paste("PLR\t0.8\t0.9985\t0.7\t0.9956\t0.9986\t0.0955\t0.9969\n"))
+cat(paste("LR\tNA\t0.9985\t0.7\t0.9956\t0.9984\t0.0895\t0.9970\n"))
+cat(paste("LDA\tNA\t0.9889\t0.9\t0.9846\t0.9926\t0.2587\t0.9915\n"))
+cat(paste("SVM\tNA\t0.9948\t0.9\t0.9971\t0.9983\t0.0371\t0.9988\n"))
+```
+
+
+After performing cross validation, we see that each of the models performed exceptionally well. SVM achieved the highest accuracy among all the models tested, with a value of 0.9971. It also had a very low FPR of 0.0371, indicating that it is very good at correctly identifying negative samples. Additionally, SVM had a high TPR of 0.9983, which suggests that it is good at identifying positive samples. Random Forest (RF) also performed very well, with an accuracy of 0.9970 and a low FPR of 0.0415. However, its TPR was slightly lower than SVM's, at 0.9983.
+
+Quadratic discriminant analysis (QDA) had a relatively low accuracy of 0.9947, but a high TPR of 0.9993. However, its FPR was also high at 0.1444, suggesting that it may not be a good choice for applications where it is important to avoid false positives. Penalized logistic regression (PLR) had an accuracy of 0.9956 and a relatively low FPR of 0.0955, indicating that it is good at correctly identifying negative samples. However, its TPR was slightly lower than SVM's and RF's, at 0.9986. Logistic regression (LR) had a similar performance to PLR, with an accuracy of 0.9956 and a TPR of 0.9984. However, its FPR was slightly higher than PLR's, at 0.0895.
+
+Linear discriminant analysis (LDA) had the lowest performance among all the models tested, with an accuracy of 0.9846, a low TPR of 0.9926, and a high FPR of 0.2587.
+
+In the context of this experiment, there may not necessarily be a "best model" for rescuing people from a naturals disaster due to the unpredictability of nature and the fairly similar results each model in this experiment produced. However, in general, SVM and RF appear to be the most suitable models for identifying stranded people due to the impressive statistical results the model produced as well as their high accuracy and low false negative rates, as we would want to minimize the number of false negatives and positives. In the real life scenario, rescuing someone who does not need rescuing (or misidentifying a non-person as a rescue target) would result in wasted time and effort and ultimately could cost someone their health and/or life.
+
+Overall, the results from cross-validation suggest that SVM and RF are the strongest models for the classification of the Blue Tarps, while QDA and LDA may be a poor choice due to their high false positive rates.
+
+Hold-out Data: 
+
+```{r}
+cat(paste("Model    ", "Tuning  ", "Sigma_Lambda ", "AUROC   ", "Threshold   ", "Accuracy   ", "TPR   ", "FPR   ", "Precision\n"))
+cat(paste("PLR          ", "0.8     ", "0            ", "0.9995  ", "0.7         ", "0.9958     ", "0.9960", "0.0227", "0.9998\n"))
+cat(paste("RF           ", "1       ", "NaN          ", "0.9858  ", "0.6         ", "0.9946     ", "0.9976", "0.3233", "0.9969\n"))
+cat(paste("SVM          ", "1.5     ", "9            ", "0.9811  ", "0.9         ", "0.9892     ", "0.9962", "0.7495", "0.9929\n"))
+cat(paste("KNN          ", "20      ", "NaN          ", "0.9642  ", "0.4         ", "0.9911     ", "0.9919", "0.0894", "0.9991\n"))
+cat(paste("QDA          ", "NaN     ", "NaN          ", "0.9922  ", "0.7         ", "0.9954     ", "0.9986", "0.3502", "0.9967\n"))
+cat(paste("LDA          ", "NaN     ", "NaN          ", "0.9924  ", "0.9         ", "0.9835     ", "0.9859", "0.2664", "0.9974\n"))
+cat(paste("Log Reg      ", "NaN     ", "NaN          ", "0.9994  ", "0.7         ", "0.9947     ", "0.9948", "0.0195", "0.9998\n"))
+
+```
+
+
+Looking at the performance metrics for the different models trained on the Holdout data, one standout model is PLR (partial least squares regression). This model has a relatively high AUROC of 0.9995 and a high accuracy of 0.9958, indicating that it performs well in distinguishing between blue tarps and non-blue tarps. PLR also has a very high precision of 0.9998, indicating that when it predicts a blue tarp, it is very likely to be correct. The true positive rate (TPR) for PLR is 0.9960, meaning that it correctly identifies 99.6% of the blue tarps, and the false positive rate (FPR) is low at 0.0227, meaning that it incorrectly identifies non-blue tarps as blue tarps only 2.27% of the time.
+
+In contrast to the original data set, the SVM (support vector machine) model performs worse here, which has a relatively lower AUROC of 0.9811 and accuracy of 0.9892. However, the TPR for SVM is high at 0.9962, indicating that it correctly identifies a high proportion of the blue tarps. However, the FPR is significantly higher for SVM than before at 0.7495, indicating that it has a higher rate of false positives. Random Forest also sports some disappointing data with a FPR of 0.3233.
+
+KNN (k-nearest neighbors) has a lower AUROC of 0.9642 and accuracy of 0.9911, and the TPR is 0.9919, which is lower than for other models. However, the FPR is relatively lower at 0.0894, indicating that KNN has a lower rate of false positives in comparison.
+
+Once again, I find minimizing false positives to be important, so a model like PLR may be the best choice. GLM or Logistic Regression also performs reasonably well in those categories.
+
+# 2. Why The Findings Above Are Compatible or Reconcilable
+
+The findings above do have some significant discrepancies between the optimal models found in cross-validation and hold-out testing. For example, we see how RF and SVM perform very well in regards to the false negative rate for the cross validation set - but are graded the worst in the FNR category for the Holdout set. Despite these discrepancies, the results are considered reconcilable since the models remained relatively stable in their rank for most metrics. While there were noticeable differences in the relative rankings of models for certain metrics, most results were within a similar range, with values starting either in the high 0.98s or low 0.99s. This suggests that the models were performing consistently well across both data sets, with no significant drop in performance when tested on the hold-out set. Additionally, the fact that some models maintained relatively consistent rankings across both tests indicates that they may be more reliable choices for this problem.
+
+However, it is worth noting that there may still be differences between the original data set and the hold-out set that could impact model performance. For example, differences in color distributions between the two sets could lead to variations in model accuracy. It may be beneficial to further explore the potential impact of these differences to ensure that the chosen model performs well in all scenarios.
+
+Overall, it is important to carefully consider the metrics that are most important for the specific problem at hand when choosing a model. In this case, balancing FNR, FPR, and precision were the most crucial factors, and the chosen model should optimize these metrics to effectively locate as many displaced persons as possible while minimizing wasted resources. Ultimately, each model for both methods performed exceptionally well and is dependent upon the specific needs and desires of the user.
+
+# 3. Recommendation and Rationale Regarding Which Algorithm to Use for Detection of Blue Tarps
+
+Based on the results of the cross-validation and hold-out testing, as well as considering the strengths and weaknesses of each model, the logistic regression model would be my recommended algorithm for detecting blue tarps and, therefore, locating displaced persons in Haiti. One key factor in this recommendation is the balance of high accuracy, low false negative rate, and low computational cost. The logistic regression model achieved a high accuracy of 99.94% in the hold-out test while having the lowest false negative rate among all models. Additionally, logistic regression is known for its computational efficiency, which would allow for faster processing and analysis of large image data sets. Furthermore, the logistic regression model performed consistently well across both the cross-validation and hold-out testing, with relatively stable rankings across all performance metrics. This suggests that the model is robust and can be relied upon for consistent results in future use cases.
+
+Overall, the logistic regression model is the algorithm I would recommend for detecting blue tarps and locating displaced persons in Haiti due to its high accuracy, low false negative rate, computational efficiency, and consistent performance across testing.
+
+# 4. Discussion of the Relevance of the Metrics Calculated in the Tables to this Application Context
+
+In this analysis, I discovered that for most models, the most important metrics to consider were the false negative rate (FNR) and false positive rate (FPR). Prioritizing these two values would lead to an optimal solution of locating the most people in the shortest amount of time. Reducing the FNR was crucial to ensure that no displaced people were being overlooked or left behind. However, it was equally important to be mindful of the cost associated with searching for and providing aid across a devastated region. Reducing FNR without regard for FPR would not be useful because it could lead to resources being wasted on trying to reach areas without people present.
+
+Another crucial metric to consider was precision, which provided a measure of the dispersion of prediction errors. High precision values indicated greater confidence in the true positive rate (TPR) and FPR values observed. Having high precision was important to minimize the number of false positives and ensure that resources were being allocated efficiently. However, it was also important to balance precision with other metrics, such as FNR and FPR, to ensure that the overall performance of the model was optimized. Ultimately, the optimal model for this problem would need to balance these various metrics to effectively locate as many displaced persons as possible while minimizing wasted resources.
+
+# 5. Importance of Model Speed
+
+One of the main downsides of using random forest (RF) and support vector machines (SVM) for this project is that they can take a significant amount of time to run. This is due to the complexity of these algorithms and the large amount of data being processed. The time required for model training and evaluation can make it difficult to quickly adapt to changing conditions on the ground, which is a critical aspect of disaster relief efforts. In situations where time is of the essence, such as after a natural disaster, delays caused by long computation times can result in a significant impact on the effectiveness of the relief effort. Therefore, it is important to consider the trade-off between model performance and computational resources when selecting the most appropriate algorithm for a given situation.
+
+I personally experienced long delays while running the RF and SVM models during this project. However, hopefully in a disaster experience, superior equipment would be provided that may alleviate such an issue and allow for the optimal model to be used.
+
+# 6. Conclusions Regarding Future Improvements
+
+There are several ways in which this project can be improved. 
+
+My first recommended action to help improve the results of the experiment would be to improve upon the data collection and classification process for the experiment. The data in this experiment was fairly primitive, with basic colors and conditions making up the data set. Gathering more advanced data would help in two ways: it would allow for greater ability to distinguish tarps vs. non-tarps and it would allow rescuers to prioritize certain areas/people over others. Collecting more data with a wider range of conditions would allow us to provide more training examples for the model to learn from and improve its ability to adapt to new, previously unknown data. Even something such as more complex color classification schemes may make a significant difference in combing through the data for colors that match those of the tarps. 
+
+More advanced data classifications would also allow rescuers to determine which people are in greater need of rescue. For example, if a person's tarp is damaged and wet, they may be in greater need than a group who have an intact and dry tarp for shelter. One may also consider including data regarding elevation (for flooding), general population age, medical status, and more in certain areas to prioritize rescue victims.
+
+Another way is to improve the image pre-processing steps by implementing advanced techniques to normalize the color values across different images. This would help to reduce the effects of brightness differences in the images, which was identified as a potential source of error in the current analysis. Additionally, incorporating other types of image features, such as texture and shape, could potentially improve the accuracy of the models.
+
+Yet another improvement could be to incorporate additional sources of data, such as satellite imagery or data from social media platforms. Satellite imagery could provide a larger coverage area and potentially more frequent updates than aerial imagery. Social media data, such as photos or posts, could provide valuable information on the locations of displaced persons and aid workers on the ground.
+
+Finally, it would be beneficial to test the models on data from other disaster scenarios to determine the ability to generalize the models. Each disaster scenario has its unique challenges and characteristics, and it is important to ensure that the models developed in this project can be applied to other scenarios as well. This would help to make the models more versatile and increase their potential impact in future disaster relief efforts.

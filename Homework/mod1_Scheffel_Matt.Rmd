@@ -2,7 +2,7 @@
 title: "DS-6030 Homework Module 1"
 author: "Matt Scheffel"
 output:
-  pdf_document:
+  github_document:
     toc: no
 ---
 
